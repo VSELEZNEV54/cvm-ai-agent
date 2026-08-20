@@ -1,0 +1,1882 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ИИ-агент для брифа и гипотез — одна точка входа в CVM</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="Заказчик приходит с задачей «нужна рассылка» — агент интервьюирует, собирает бриф, формулирует гипотезы, считает тест, показывает слоты и заводит задачу в Jira.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23FFC800'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cm.beeline.ru/fonts/beelinesans/stylesheet.css">
+<script>
+(function(){
+  try{
+    var coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 1;
+    var small  = Math.min(screen.width, screen.height) <= 820;
+    if(coarse && small) document.documentElement.classList.add('mob');
+    document.documentElement.classList.add('anim');
+    /* ошибка в скрипте — мгновенно показываем весь контент */
+    window.onerror = function(){ document.documentElement.classList.remove('anim'); };
+  }catch(e){}
+})();
+</script>
+<style>
+:root{
+  --y:#FFC800; --y2:#FFD64D; --y3:#FFF6D6;
+  --ink:#141414; --dark:#3F4242; --gray:#787979; --gray2:#A5A6A6;
+  --f3:#F3F3F3; --hair:#E6E6E6; --ok:#92D050; --white:#fff;
+  --warn:#D93A22; --warnbg:#FFF4F1;
+  --r:22px; --rs:14px;
+  --sans:"Beeline Sans","BeelineSans",Arial,Helvetica,sans-serif;
+  --med:"Beeline Sans Medium","Beeline Sans",Arial,Helvetica,sans-serif;
+  --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0; background:var(--white); color:var(--ink);
+  font:400 19px/1.5 var(--sans); -webkit-font-smoothing:antialiased; overflow-x:hidden}
+::selection{background:var(--y); color:var(--ink)}
+h1,h2,h3{font-family:var(--med); font-weight:500; margin:0; letter-spacing:-.01em}
+h1{font-size:clamp(38px,6.4vw,104px); line-height:1.02}
+h2{font-size:clamp(28px,3.6vw,58px); line-height:1.07}
+h3{font-size:clamp(19px,1.5vw,26px); line-height:1.2}
+p{margin:0}
+.num{font-variant-numeric:tabular-nums}
+.wrap{max-width:1320px; margin:0 auto; padding:0 clamp(20px,4vw,56px)}
+section{position:relative; padding:clamp(72px,10vh,140px) 0}
+.lead{color:var(--gray); font-size:clamp(17px,1.35vw,22px); max-width:64ch; margin-top:18px}
+.kicker{font-family:var(--med); font-size:14.5px; letter-spacing:.1em; color:var(--gray2); margin-bottom:20px}
+
+#bar{position:fixed; inset:0 auto auto 0; height:3px; width:0; background:var(--y); z-index:60}
+#vsw{position:fixed; top:14px; right:clamp(14px,2vw,26px); z-index:62; display:flex; gap:4px;
+  padding:4px; border-radius:999px; background:rgba(255,255,255,.92); border:1px solid var(--hair);
+  -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  box-shadow:0 10px 34px rgba(20,20,20,.10)}
+#vsw button{background:transparent; color:var(--gray); padding:8px 15px; font-size:14px;
+  border-radius:999px; white-space:nowrap}
+#vsw button.on{background:var(--y); color:var(--ink)}
+@media(max-width:560px){#vsw{top:10px; right:10px; padding:3px}
+  #vsw button{padding:7px 11px; font-size:12.5px}}
+body.v-team [data-ver="client"]{display:none}
+body.v-client [data-ver="team"]{display:none}
+#dots{position:fixed; right:clamp(10px,1.6vw,22px); top:50%; transform:translateY(-50%); z-index:55;
+  display:flex; flex-direction:column; gap:11px}
+#dots a{width:9px; height:9px; border-radius:50%; background:var(--hair); transition:.3s; position:relative}
+#dots a.on{background:var(--y); transform:scale(1.5)}
+#dots a span{position:absolute; right:18px; top:50%; transform:translateY(-50%) translateX(6px);
+  white-space:nowrap; font-size:13px; color:var(--gray); background:var(--white);
+  padding:3px 9px; border-radius:8px; opacity:0; pointer-events:none; transition:.25s;
+  box-shadow:0 2px 14px rgba(0,0,0,.07)}
+#dots a:hover span{opacity:1; transform:translateY(-50%) translateX(0)}
+@media(max-width:780px){#dots{display:none}}
+
+.rise{transition:opacity .7s var(--ease), transform .7s var(--ease)}
+html.anim .rise{opacity:0; transform:translateY(26px)}
+html.anim .rise.in{opacity:1; transform:none}
+.d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}
+.d4{transition-delay:.32s}.d5{transition-delay:.4s}.d6{transition-delay:.48s}
+
+/* герой */
+.hero{min-height:100svh; display:flex; align-items:center; padding-top:40px; overflow:hidden; position:relative}
+.hero::before{content:""; position:absolute; right:-18%; top:-24%; width:60vw; height:60vw;
+  background:radial-gradient(closest-side, rgba(255,200,0,.14), rgba(255,200,0,0)); pointer-events:none}
+.hero .wrap{width:100%; position:relative}
+.hero-grid{display:grid; grid-template-columns:1.15fr .85fr; gap:clamp(24px,4vw,64px); align-items:center}
+.hero h1 span.mute{color:var(--gray2)}
+.ln{display:block; overflow:hidden; padding-bottom:.04em}
+.ln i{display:inline-block; font-style:normal}
+html.anim .ln i{transform:translateY(114%); animation:lift 1s var(--ease) forwards}
+.ln:nth-child(2) i{animation-delay:.1s}
+.ln:nth-child(3) i{animation-delay:.2s}
+@keyframes lift{to{transform:none}}
+html.anim .fadeup{opacity:0; transform:translateY(18px); animation:fup .8s var(--ease) forwards}
+.f1{animation-delay:.35s}.f2{animation-delay:.5s}.f3d{animation-delay:.65s}.f4{animation-delay:.8s}
+@keyframes fup{to{opacity:1; transform:none}}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{50%{transform:scale(1.06)}}
+/* мини-чат */
+.minichat{background:var(--white); border:1px solid var(--hair); border-radius:var(--r);
+  box-shadow:0 34px 90px rgba(20,20,20,.10); padding:16px; max-width:460px; margin-left:auto;
+  width:100%; min-height:440px; display:flex; flex-direction:column;
+  transition:transform .6s var(--ease); will-change:transform}
+.mc-head{display:flex; justify-content:space-between; align-items:center; gap:14px; padding:4px 6px 14px}
+.mc-dash{display:flex; gap:6px; flex:1; max-width:220px}
+.mc-dash i{height:3px; flex:1; border-radius:3px; background:var(--hair); transition:.4s}
+.mc-dash i.on{background:var(--y)}
+.mc-ttl{font-family:var(--med); font-size:11px; letter-spacing:.14em; color:var(--gray2);
+  text-transform:uppercase; white-space:nowrap}
+.mc-body{flex:1; background:#FAFAFA; border-radius:16px; padding:14px;
+  display:flex; flex-direction:column; gap:9px; justify-content:flex-end; overflow:hidden}
+.mc-msg{max-width:84%; font-size:14.5px; line-height:1.35; padding:9px 14px; border-radius:14px;
+  animation:pop .4s var(--ease) both}
+.mc-msg.c{background:var(--f3); align-self:flex-start; border-bottom-left-radius:5px}
+.mc-msg.a{background:var(--y); align-self:flex-end; border-bottom-right-radius:5px}
+.mc-typing{display:flex; gap:4px; padding:11px 13px; background:var(--f3); border-radius:14px;
+  border-bottom-left-radius:5px; align-self:flex-start; width:fit-content}
+.mc-typing i{width:6px; height:6px; border-radius:50%; background:var(--gray2); animation:blink 1.2s infinite}
+.mc-typing i:nth-child(2){animation-delay:.18s} .mc-typing i:nth-child(3){animation-delay:.36s}
+.hero-meta{display:flex; gap:10px; flex-wrap:wrap; margin-top:34px}
+.chip{font-family:var(--med); font-size:15px; padding:9px 16px; border-radius:999px; background:var(--f3); color:var(--dark)}
+.chip.y{background:var(--y); color:var(--ink)}
+.scrollhint{margin-top:44px; color:var(--gray2); font-size:15px; display:flex; align-items:center; gap:10px}
+.scrollhint em{width:1px; height:34px; background:var(--hair); display:block; position:relative; overflow:hidden}
+.scrollhint em::after{content:""; position:absolute; inset:0 0 auto; height:12px; background:var(--y); animation:drop 1.8s ease-in-out infinite}
+@keyframes drop{0%{top:-12px}100%{top:34px}}
+@media(max-width:900px){.hero-grid{grid-template-columns:1fr} .minichat{max-width:100%; margin:14px 0 0; min-height:360px}}
+
+/* первый баннер */
+.hello{min-height:100svh; display:flex; align-items:center; text-align:center; position:relative; overflow:hidden}
+.hello .wrap{width:100%; position:relative}
+.hello > .kicker{position:absolute; top:clamp(30px,6vh,60px); left:0; right:0; text-align:center; margin:0; z-index:2}
+.hello > .scrollhint{position:absolute; bottom:clamp(22px,5vh,48px); left:0; right:0;
+  justify-content:center; margin:0; z-index:2}
+.hello-h{margin:0 auto; display:grid; justify-items:center; gap:.1em; line-height:1;
+  letter-spacing:-.01em}
+.hello-h span{display:block; overflow:hidden; padding-bottom:.06em}
+.hello-h span > i{display:inline-block; font-style:normal}
+html.anim .hello-h span > i{transform:translateY(112%); animation:lift .95s var(--ease) forwards}
+.hello-h .l1{font-family:var(--sans); font-weight:400; font-size:clamp(17px,2vw,32px);
+  color:var(--gray); letter-spacing:.01em}
+.hello-h .l1 > i{animation-delay:.15s}
+.hello-h .l2{font-size:clamp(54px,9.6vw,164px); line-height:.94; letter-spacing:-.035em}
+.hello-h .l2 > i{animation-delay:.28s}
+.hello-h .l3{font-size:clamp(21px,2.8vw,46px); line-height:1.1; letter-spacing:-.015em; color:var(--dark)}
+.hello-h .l3 > i{animation-delay:.42s}
+.hello-h .l4{font-size:clamp(24px,3.4vw,58px); line-height:1.1; letter-spacing:-.02em}
+.hello-h .l4 > i{animation-delay:.54s}
+.hello-h em{font-style:normal;
+  background-image:linear-gradient(var(--y),var(--y)); background-repeat:no-repeat;
+  background-size:100% 38%; background-position:0 84%}
+html.anim .hello-h em{background-size:0% 38%; animation:mark .95s var(--ease) 1.35s forwards}
+@keyframes mark{to{background-size:100% 38%}}
+@media(max-width:560px){.hello-h .l2{font-size:clamp(44px,15vw,64px)}}
+.bgfx{position:absolute; inset:0; pointer-events:none}
+.blob{position:absolute; border-radius:50%; filter:blur(70px); opacity:.65;
+  animation:drift var(--bd,20s) ease-in-out infinite alternate}
+.b1{width:46vw; height:46vw; left:-12vw; top:-14vw; background:var(--y3); --bd:16s}
+.b2{width:38vw; height:38vw; right:-10vw; top:8vh; background:rgba(255,200,0,.30); --bd:22s; animation-delay:-6s}
+.b3{width:34vw; height:34vw; left:24vw; bottom:-18vw; background:rgba(255,214,77,.28); --bd:19s; animation-delay:-11s}
+@keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(6vw,-4vh) scale(1.15)}}
+.ring{position:absolute; border:1px solid var(--hair); border-radius:50%; animation:spin 44s linear infinite}
+.r1{width:60vmin; height:60vmin; left:50%; top:50%; margin:-30vmin 0 0 -30vmin}
+.r2{width:86vmin; height:86vmin; left:50%; top:50%; margin:-43vmin 0 0 -43vmin;
+  animation-direction:reverse; animation-duration:64s; border-color:#f0f0f0}
+.ring::after{content:""; position:absolute; width:12px; height:12px; border-radius:50%;
+  background:var(--y); top:-6px; left:calc(50% - 6px)}
+.fdot{position:absolute; display:flex; align-items:center; gap:9px; font-style:normal;
+  animation:fl var(--fd,10s) ease-in-out infinite}
+.fdot b{width:11px; height:11px; border-radius:50%; background:var(--y); flex:none;
+  box-shadow:0 0 0 5px rgba(255,200,0,.15)}
+.fdot span{font-family:var(--med); font-size:14px; color:var(--dark); white-space:nowrap;
+  background:rgba(255,255,255,.85); border:1px solid var(--hair); border-radius:999px;
+  padding:6px 13px; box-shadow:0 8px 26px rgba(20,20,20,.07)}
+@keyframes fl{0%,100%{transform:translateY(0)}50%{transform:translateY(-28px)}}
+@media(max-width:780px){.fdot{display:none}}
+
+/* бегущая строка */
+.tick{overflow:hidden; border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); padding:15px 0}
+.tick-in{display:inline-flex; white-space:nowrap; animation:tickmv 30s linear infinite; will-change:transform}
+.tick .seq{display:inline-flex; gap:0; font-family:var(--med); color:var(--gray2); font-size:15px}
+.tick .seq b{font-weight:500; color:var(--ink); padding:0 14px}
+.tick .seq em{font-style:normal; color:var(--y); padding:0 2px}
+@keyframes tickmv{to{transform:translateX(-50%)}}
+
+/* карточки */
+.cards{display:grid; gap:14px}
+.c4{grid-template-columns:repeat(4,1fr)}
+.c3{grid-template-columns:repeat(3,1fr)}
+.c2{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--white); border:1px solid var(--hair); border-radius:var(--r); padding:clamp(20px,2vw,30px);
+  transition:transform .4s var(--ease), box-shadow .4s var(--ease)}
+.card:hover{transform:translateY(-4px); box-shadow:0 20px 50px rgba(20,20,20,.08)}
+.card.fill{background:var(--f3); border-color:transparent}
+.card.dark{background:var(--dark); border-color:transparent; color:var(--white)}
+.card.dark .sub{color:#c9cbcb}
+.card.acc{background:var(--y3); border-color:transparent}
+.card.y{background:var(--y); border-color:transparent}
+.sub{color:var(--gray); font-size:15px; margin-top:6px}
+.cards.lvl .card{display:flex; flex-direction:column}
+.cards.lvl .sub.top{margin-top:0; min-height:2.6em}
+.cards.lvl h3{margin-top:2px}
+.cards.lvl .sub.foot{margin-top:auto; padding-top:10px}
+.card p.body{margin-top:14px; font-size:17px; line-height:1.42}
+.big{font-family:var(--med); font-size:clamp(38px,4.2vw,68px); line-height:1; color:var(--y)}
+.card.dark .big{color:var(--y)}
+.big.take{font-size:clamp(28px,2.8vw,44px); color:var(--dark); margin-bottom:4px}
+.card.y .big.take{color:var(--ink)}
+.card.dark .big.take{color:var(--y)}
+.card.y .sub{color:#8a6f00}
+.soon{display:inline-block; font-family:var(--med); font-size:13px; line-height:1; padding:6px 12px; border-radius:999px;
+  background:var(--y3); color:#7a5c00; margin-left:12px; vertical-align:middle; white-space:nowrap; letter-spacing:0}
+@media(max-width:1000px){.c4{grid-template-columns:repeat(2,1fr)} .c3{grid-template-columns:1fr}}
+@media(max-width:640px){.c4,.c2{grid-template-columns:1fr}}
+
+/* цифра-герой */
+.hugegrid{display:grid; grid-template-columns:.95fr 1.05fr; gap:clamp(20px,3vw,50px); align-items:center; margin-top:40px}
+.huge{font-family:var(--med); font-size:clamp(48px,7vw,124px); line-height:1; letter-spacing:-.03em; white-space:nowrap}
+.huge em{font-style:normal; color:var(--gray2)}
+.huge .arrow{color:var(--y)}
+@media(max-width:900px){.hugegrid{grid-template-columns:1fr}}
+
+/* было / стало */
+.ba{display:grid; grid-template-columns:1fr auto 1fr; gap:clamp(14px,2vw,28px); align-items:stretch; margin-top:14px}
+.ba .arrow{display:grid; place-items:center; color:var(--gray2); font-size:34px}
+.ba ul{margin:14px 0 0; padding-left:20px; color:var(--dark)}
+.ba li{margin-bottom:9px; font-size:17px; line-height:1.4}
+@media(max-width:860px){.ba{grid-template-columns:1fr} .ba .arrow{transform:rotate(90deg)}}
+
+/* цитата-кейс */
+.quote{border-left:3px solid var(--y); padding:6px 0 6px 24px; margin-top:40px; max-width:78ch}
+.quote p{font-size:clamp(19px,1.7vw,26px); line-height:1.4}
+.quote span{display:block; margin-top:12px; color:var(--gray2); font-size:15px}
+
+/* пайплайн */
+.sticky-wrap{height:320vh; position:relative}
+.stage{position:sticky; top:0; height:100svh; display:flex; align-items:center; overflow:hidden}
+.rail{position:relative; margin-top:clamp(30px,6vh,70px)}
+.railline{position:absolute; left:0; right:0; top:38px; height:1px; background:var(--hair)}
+.railfill{position:absolute; left:0; top:38px; height:2px; background:var(--y); width:0; transition:width .3s var(--ease)}
+.steps{position:relative; display:grid; grid-template-columns:repeat(5,1fr); gap:clamp(16px,2.4vw,40px)}
+.step{text-align:center}
+.step .ball{width:76px; height:76px; margin:0 auto; border-radius:50%; background:var(--f3);
+  display:grid; place-items:center; font-family:var(--med); font-size:22px; color:var(--dark);
+  transition:.45s var(--ease); position:relative}
+.step.on .ball{background:var(--y); color:var(--ink); transform:scale(1.16); box-shadow:0 16px 40px rgba(255,200,0,.4)}
+.step.done .ball{background:var(--y3)}
+.step.done .ball::after{content:"✓"; position:absolute; right:-2px; top:-2px; width:22px; height:22px;
+  border-radius:50%; background:var(--y); font-size:12px; display:grid; place-items:center}
+.step h3{margin-top:20px; transition:.3s; color:var(--gray2)}
+.step.on h3, .step.done h3{color:var(--ink)}
+.step .sub{min-height:3.4em; padding:0 6px; max-width:24ch; margin-left:auto; margin-right:auto}
+.stage-note{margin-top:clamp(24px,5vh,48px); border-left:2px solid var(--y); padding-left:20px; max-width:74ch}
+.stage-note b{font-family:var(--med); font-weight:500; display:block; margin-bottom:6px}
+.stage-note p{color:var(--gray)}
+.stage-note.flip{animation:noteflip .45s var(--ease)}
+@keyframes noteflip{from{opacity:0; transform:translateY(10px)}}
+@media(max-width:780px){
+  .sticky-wrap{height:auto} .stage{position:static; height:auto; padding:40px 0}
+  .steps{grid-template-columns:1fr; gap:22px} .railline,.railfill{display:none}
+  .step{display:grid; grid-template-columns:76px 1fr; column-gap:18px; row-gap:4px; text-align:left; align-items:start}
+  .step .ball{grid-row:1 / span 2}
+  .step h3{grid-column:2; margin-top:2px}
+  .step .sub{grid-column:2; min-height:0}
+}
+
+/* развилка */
+.fork{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px}
+.fork .card{position:relative}
+.fork .card::before{content:""; position:absolute; left:50%; top:-26px; width:1px; height:26px; background:var(--hair)}
+.forkhead{text-align:center; padding:18px 24px; border-radius:999px; background:var(--f3); display:inline-block;
+  font-family:var(--med); margin:40px auto 0}
+.forkwrap{display:grid; justify-items:center}
+@media(max-width:700px){.fork{grid-template-columns:1fr} .fork .card::before{display:none}}
+
+/* интервью */
+.talk{display:grid; grid-template-columns:1fr 1fr; gap:clamp(14px,2vw,26px); align-items:start}
+.chat{background:var(--f3); border-radius:var(--r); padding:clamp(16px,1.6vw,24px);
+  min-height:520px; max-height:min(74vh,700px); overflow-y:auto;
+  display:flex; flex-direction:column; gap:12px; scrollbar-width:thin}
+.chat:empty::before{content:"нажмите «запустить разговор»"; margin:auto; color:var(--gray2);
+  font-size:15px; text-align:center}
+.msg{max-width:88%; padding:13px 17px; border-radius:18px; font-size:17px; line-height:1.4;
+  animation:pop .42s var(--ease) both}
+.msg.a{background:var(--white); border-bottom-left-radius:6px}
+.msg.m{background:var(--y); align-self:flex-end; border-bottom-right-radius:6px}
+.msg .who{display:block; font-size:12.5px; color:var(--gray); margin-bottom:4px; letter-spacing:.04em}
+.msg.m .who{color:#8a6f00}
+@keyframes pop{from{opacity:0; transform:translateY(14px) scale(.98)}}
+.typing{display:flex; gap:5px; padding:16px 18px; background:var(--white); border-radius:18px; align-self:flex-start; width:fit-content}
+.typing i{width:7px; height:7px; border-radius:50%; background:var(--gray2); animation:blink 1.2s infinite}
+.typing i:nth-child(2){animation-delay:.18s} .typing i:nth-child(3){animation-delay:.36s}
+@keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
+.tz{border:1px solid var(--hair); border-radius:var(--r); overflow:hidden}
+.tz-head{padding:16px 20px; border-bottom:1px solid var(--hair); display:flex; justify-content:space-between; align-items:center; gap:12px}
+.tz-head b{font-family:var(--med); font-weight:500}
+.status{font-size:13.5px; padding:6px 12px; border-radius:999px; background:var(--f3); color:var(--gray); white-space:nowrap}
+.status.warn{background:var(--y3); color:#7a5c00}
+.status.ok{background:#eef8dd; color:#4d7a11}
+.row{display:grid; grid-template-columns:minmax(120px,.62fr) 1fr; gap:14px; padding:11px 20px;
+  border-bottom:1px solid #f4f4f4; align-items:start}
+.row:last-child{border-bottom:0}
+.row .k{color:var(--gray); font-size:15px}
+.row .v{font-size:16px; color:var(--gray2); transition:.4s}
+.row.filled{background:linear-gradient(90deg,rgba(255,246,214,.85),rgba(255,255,255,0))}
+.row.filled .v{color:var(--ink)}
+.tag{display:inline-block; font-size:12px; padding:3px 9px; border-radius:7px; margin-left:8px; vertical-align:1px; font-family:var(--med)}
+.tag.calc{background:var(--f3); color:var(--dark)}
+.tag.gap{background:var(--dark); color:var(--white)}
+.tag.assume{background:var(--y3); color:#7a5c00}
+.taglegend{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:18px;
+  color:var(--gray2); font-size:14.5px}
+.taglegend .tag{margin-left:0}
+.ctrl{display:flex; gap:10px; align-items:center; margin-top:16px; flex-wrap:wrap}
+button{font:500 16px/1 var(--med); border:0; cursor:pointer; padding:13px 22px; border-radius:999px;
+  background:var(--y); color:var(--ink); transition:.2s}
+button:hover{filter:brightness(.96)} button:active{transform:translateY(1px)}
+button.ghost{background:var(--f3); color:var(--dark)}
+button.ghost.on{background:var(--ink); color:var(--white)}
+.hintline{color:var(--gray2); font-size:14.5px}
+.ctrl .seg.spdseg{margin-top:0; background:var(--f3)}
+.ctrl .seg.spdseg button{padding:9px 14px; font-size:14.5px}
+.sum{margin-top:14px; border:1px solid var(--hair); border-left:3px solid var(--warn);
+  border-radius:var(--rs); padding:16px 20px 18px; background:var(--warnbg);
+  opacity:0; transform:translateY(12px); pointer-events:none;
+  transition:opacity .5s var(--ease), transform .5s var(--ease)}
+.sum.show{opacity:1; transform:none; pointer-events:auto}
+.sum-ttl{font-family:var(--med); font-weight:500; font-size:17px; display:block; margin-bottom:10px}
+.sum-row{display:grid; grid-template-columns:132px 1fr; gap:12px; padding:5px 0; font-size:15.5px}
+.sum-row span{color:var(--gray); font-size:14.5px}
+.sum-row b{font-family:var(--med); font-weight:500}
+.sum-warn{margin-top:12px; color:var(--warn); font-family:var(--med); font-size:15px; line-height:1.35}
+.sum-ok{margin-top:12px; display:none; font-family:var(--med); font-size:14px; padding:8px 14px;
+  border-radius:999px; background:#eef8dd; color:#4d7a11; width:fit-content}
+.sum.done .sum-ok{display:block}
+@media(max-width:900px){.talk{grid-template-columns:1fr} .chat{min-height:0}}
+
+/* орбита гипотез */
+.hypo{display:grid; grid-template-columns:.9fr 1.1fr; gap:clamp(20px,3vw,48px); align-items:center}
+.orbit{position:relative; width:100%; aspect-ratio:1.08; max-width:620px; margin:0 auto}
+.bub{position:absolute; border-radius:50%; display:grid; place-content:center; text-align:center;
+  transition:opacity .6s var(--ease), box-shadow .6s var(--ease);
+  animation:bfloat 6s ease-in-out infinite}
+.bub:nth-child(odd){animation-duration:7.2s; animation-delay:-2s}
+.bub:nth-child(3n){animation-delay:-4s}
+@keyframes bfloat{50%{transform:translateY(-7px)}}
+.bub b{font-family:var(--med); font-weight:500; font-size:clamp(12px,1.05vw,17px); display:block; padding:0 6px}
+.bub s{text-decoration:none; color:var(--gray); font-size:13px; display:block; margin-top:2px}
+.bub.core{background:var(--white); border:1px solid var(--hair)}
+.bub.dim{opacity:.22; animation-play-state:paused}
+.bub.pick{box-shadow:0 0 0 3px var(--white), 0 0 0 5px var(--y)}
+.split{display:grid; gap:10px}
+.ver{display:grid; grid-template-columns:54px 1fr; gap:16px; align-items:center; padding:15px 18px;
+  border:1px solid var(--hair); border-radius:var(--rs); background:var(--white); transition:.5s; opacity:.38}
+.ver.on{opacity:1}
+.ver .letter{width:54px; height:54px; border-radius:50%; display:grid; place-items:center; font-family:var(--med); font-size:22px; background:var(--f3)}
+.ver.ctrl-a .letter{background:var(--dark); color:var(--white)}
+.ver.on .letter{background:var(--y)}
+.ver.ctrl-a.on .letter{background:var(--dark); color:var(--white)}
+.ver small{color:var(--gray); display:block; font-size:14.5px; margin-top:3px}
+@media(max-width:900px){.hypo{grid-template-columns:1fr}}
+
+/* калькулятор */
+.calcwrap{display:grid; grid-template-columns:1fr 1fr; gap:clamp(18px,2.6vw,40px); align-items:start}
+.panel{background:var(--f3); border-radius:var(--r); padding:clamp(20px,2.2vw,32px)}
+.slider-lab{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; gap:12px}
+.slider-lab b{font-family:var(--med); font-weight:500; font-size:clamp(30px,3.2vw,50px)}
+input[type=range]{width:100%; -webkit-appearance:none; appearance:none; height:4px; border-radius:4px; background:var(--hair); outline:0}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:28px; height:28px; border-radius:50%;
+  background:var(--y); cursor:grab; box-shadow:0 4px 16px rgba(255,200,0,.5)}
+input[type=range]::-moz-range-thumb{width:28px; height:28px; border:0; border-radius:50%; background:var(--y); cursor:grab}
+.seg{display:inline-flex; background:var(--white); border-radius:999px; padding:4px; gap:4px; margin-top:22px; flex-wrap:wrap}
+.seg button{background:transparent; color:var(--gray); padding:9px 18px; font-size:15px}
+.seg button.on{background:var(--y); color:var(--ink)}
+.out{display:grid; grid-template-columns:repeat(2,1fr); gap:12px}
+.out .cell{border:1px solid var(--hair); border-radius:var(--rs); padding:18px 20px}
+.out .cell b{font-family:var(--med); font-weight:500; font-size:clamp(26px,2.6vw,40px); display:block; line-height:1.1}
+.out .cell.wide{grid-column:1/-1}
+.out .cell.y{background:var(--y3); border-color:transparent}
+#mdechart{width:100%; height:auto; aspect-ratio:640/190; margin-top:10px; display:block}
+@media(max-width:900px){.calcwrap{grid-template-columns:1fr}}
+
+/* слоты календаря */
+.calhead{display:flex; justify-content:space-between; align-items:baseline; max-width:620px; margin-top:0}
+.calhead b{font-family:var(--med); font-weight:500; font-size:19px}
+.calhead span{color:var(--gray2); font-size:14px}
+.slots{display:grid; grid-template-columns:repeat(7,1fr); gap:8px; margin-top:14px; max-width:620px}
+.slot{aspect-ratio:1; border-radius:12px; background:var(--f3); display:grid; place-items:center;
+  font-size:15px; color:var(--gray2); transition:.35s}
+.slot.wk{background:#f9f9f9; color:#cfcfcf}
+.slot.free{background:var(--y3); color:var(--dark); cursor:pointer}
+.slot.free:hover{background:var(--y2); color:var(--ink); transform:translateY(-2px)}
+.slot.busy{background:var(--f3); color:var(--gray2); text-decoration:line-through}
+.slot.pickd{background:var(--y); color:var(--ink); font-family:var(--med); box-shadow:0 10px 26px rgba(255,200,0,.45)}
+.slot.head{background:transparent; color:var(--gray2); font-size:13px; aspect-ratio:auto; padding:4px 0}
+.slotlegend{display:flex; gap:16px; flex-wrap:wrap; margin-top:16px; font-size:15px; color:var(--gray)}
+.slotlegend i{display:inline-block; width:14px; height:14px; border-radius:5px; margin-right:8px; vertical-align:-2px}
+.slotwrap{display:grid; grid-template-columns:auto 1fr; gap:clamp(20px,3vw,44px); align-items:start; margin-top:40px}
+.plan-row{display:grid; grid-template-columns:1fr auto; gap:12px; padding:10px 0;
+  border-bottom:1px solid #f0f0f0; font-size:16px; align-items:baseline}
+.plan-row:last-child{border-bottom:0}
+.plan-row span{color:var(--gray); font-size:15px}
+.plan-row b{font-family:var(--med); font-weight:500; white-space:nowrap}
+.plan-row.hot b{color:#8a6f00; background:var(--y3); padding:3px 10px; border-radius:8px}
+@media(max-width:900px){.slotwrap{grid-template-columns:1fr}}
+
+/* jira-карточка */
+.jira{border:1px solid var(--hair); border-radius:var(--r); overflow:hidden; max-width:560px; background:var(--white)}
+.jira-head{background:var(--f3); padding:14px 20px; display:flex; justify-content:space-between; align-items:center; font-size:15px; color:var(--gray)}
+.jira-head .pulse{display:inline-flex; align-items:center; gap:7px}
+.jira-head .pulse::before{content:""; width:8px; height:8px; border-radius:50%; background:var(--ok); animation:pulse 2s ease-in-out infinite}
+.jira-body{padding:20px}
+.jira-body b.ttl{font-family:var(--med); font-weight:500; font-size:20px; display:block; margin-bottom:12px}
+.jira-row{display:grid; grid-template-columns:130px 1fr; gap:12px; padding:7px 0; font-size:16px;
+  transition:opacity .5s var(--ease), transform .5s var(--ease)}
+html.anim .jira-row{opacity:0; transform:translateY(12px)}
+.jira.in .jira-row{opacity:1; transform:none}
+.jira.in .jira-row:nth-of-type(1){transition-delay:.1s}
+.jira.in .jira-row:nth-of-type(2){transition-delay:.2s}
+.jira.in .jira-row:nth-of-type(3){transition-delay:.3s}
+.jira.in .jira-row:nth-of-type(4){transition-delay:.4s}
+.jira.in .jira-row:nth-of-type(5){transition-delay:.5s}
+.jira.in .jira-row:nth-of-type(6){transition-delay:.6s}
+.jira.in .jira-row:nth-of-type(7){transition-delay:.7s}
+.jira-row span{color:var(--gray); font-size:15px}
+
+/* финал */
+.final{background:var(--white); color:var(--ink); overflow:hidden; border-top:1px solid var(--hair)}
+.final::before{content:""; position:absolute; right:-16%; top:-32%; width:54vw; height:54vw;
+  border-radius:50%; filter:blur(70px); background:rgba(255,200,0,.16); pointer-events:none;
+  animation:drift 18s ease-in-out infinite alternate}
+.final::after{content:""; position:absolute; left:-14%; bottom:-38%; width:46vw; height:46vw;
+  border-radius:50%; filter:blur(70px); background:rgba(255,246,214,.9); pointer-events:none;
+  animation:drift 22s ease-in-out infinite alternate-reverse}
+.final .wrap{position:relative; z-index:1}
+.final .kicker{color:var(--gray2)}
+.final h2{font-size:clamp(32px,4.4vw,72px); max-width:22ch}
+.final h2 em{font-style:normal;
+  background-image:linear-gradient(var(--y2),var(--y2)); background-repeat:no-repeat;
+  background-size:0% 44%; background-position:0 82%;
+  transition:background-size 1.2s var(--ease) .5s}
+.final h2.in em{background-size:100% 44%}
+.final .lead{color:var(--gray); max-width:66ch}
+.final .chain{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:44px}
+.final .chain .arrow{color:var(--gray2)}
+.final .chain .chip{background:var(--f3); color:var(--dark); animation:chipwave 6s ease-in-out infinite}
+.final .chain .chip:nth-child(1){animation-delay:0s}
+.final .chain .chip:nth-child(3){animation-delay:.6s}
+.final .chain .chip:nth-child(5){animation-delay:1.2s}
+.final .chain .chip:nth-child(7){animation-delay:1.8s}
+.final .chain .chip:nth-child(9){animation-delay:2.4s}
+@keyframes chipwave{
+  0%,14%,100%{background:#F3F3F3; transform:none; box-shadow:none}
+  6%{background:var(--y); transform:translateY(-5px); box-shadow:0 12px 28px rgba(255,200,0,.4)}
+}
+.fingrid{display:grid; grid-template-columns:1.05fr .95fr; gap:clamp(24px,4vw,64px); align-items:center}
+@media(max-width:900px){.fingrid{grid-template-columns:1fr}}
+.fincard{background:var(--white); border:1px solid var(--hair); border-radius:var(--r); overflow:hidden;
+  box-shadow:0 34px 90px rgba(20,20,20,.12); max-width:460px; width:100%; margin-left:auto;
+  animation:cardbob 6.5s ease-in-out infinite}
+@keyframes cardbob{50%{transform:translateY(-10px)}}
+@media(max-width:900px){.fincard{margin:36px auto 0}}
+.fin-head{display:flex; justify-content:space-between; align-items:center; gap:12px; padding:13px 20px;
+  background:var(--f3); font-size:14px; color:var(--gray)}
+.fin-head .pulse{display:inline-flex; align-items:center; gap:7px; white-space:nowrap}
+.fin-head .pulse::before{content:""; width:8px; height:8px; border-radius:50%; background:var(--ok);
+  animation:pulse 2s ease-in-out infinite}
+.fin-body{padding:18px 20px 20px}
+.fin-ttl{font-family:var(--med); font-weight:500; font-size:19px; display:block; margin-bottom:10px}
+#finRows{min-height:212px}
+.fin-row{display:grid; grid-template-columns:112px 1fr; gap:10px; padding:7px 0; font-size:15.5px;
+  border-bottom:1px solid #f4f4f4; animation:pop .45s var(--ease) both}
+.fin-row span{color:var(--gray); font-size:14.5px}
+.fin-status{margin-top:16px; font-family:var(--med); font-size:14px; padding:9px 15px;
+  border-radius:999px; background:var(--f3); color:var(--gray); display:inline-block; transition:.4s}
+.fin-status.ok{background:var(--y); color:var(--ink); box-shadow:0 10px 26px rgba(255,200,0,.35)}
+footer{padding:34px 0; border-top:1px solid var(--hair); background:var(--white); color:var(--gray2); font-size:15px}
+footer .wrap{display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap}
+
+/* ═══ мобильная версия ═══ */
+.hypolist{display:none; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:18px}
+.hypolist span{background:var(--y3); border-radius:14px; padding:12px 14px;
+  font-family:var(--med); font-size:15px; display:flex; justify-content:space-between;
+  gap:10px; align-items:baseline; color:var(--dark)}
+.hypolist span b{font-weight:500; color:#8a6f00; font-size:17px}
+
+@media(max-width:780px){
+body{font-size:17px}
+.wrap{padding:0 18px}
+section{padding:44px 0}
+h1{font-size:clamp(32px,8.6vw,50px)}
+h2{font-size:clamp(24px,6.4vw,34px); line-height:1.14}
+h3{font-size:19px}
+.lead{font-size:16.5px; margin-top:13px; max-width:none}
+.kicker{margin-bottom:13px; font-size:12.5px}
+.card{padding:18px 17px; border-radius:18px}
+.card p.body{font-size:16px; margin-top:10px}
+.card:hover{transform:none; box-shadow:none}
+.sub{font-size:14.5px}
+.cards{gap:10px}
+.c4, .c3, .c2{grid-template-columns:1fr}
+.cards, .ba, .talk, .calcwrap, .slotwrap, .hypo, .fork, .forkwrap, .hugegrid, .rail, .fingrid{margin-top:22px !important}
+.quote{margin-top:24px !important; padding:2px 0 2px 16px}
+.quote p{font-size:18px; line-height:1.35}
+.quote span{margin-top:9px; font-size:14px}
+.hero{min-height:0; padding-top:0}
+#s-start{padding:44px 0 !important}
+.hero-grid{grid-template-columns:1fr; gap:20px}
+.hero-meta{margin-top:20px; gap:8px}
+.chip{font-size:14px; padding:8px 13px}
+.scrollhint{margin-top:22px; font-size:14px}
+.tick{padding:11px 0}
+.tick .seq{font-size:14px}
+.hugegrid{grid-template-columns:1fr; gap:14px}
+.huge{font-size:clamp(44px,15vw,64px)}
+.ba{grid-template-columns:1fr; gap:10px}
+.ba .arrow{transform:rotate(90deg); font-size:24px}
+.ba ul{margin-top:10px; padding-left:18px}
+.ba li{font-size:16px; margin-bottom:7px}
+.fork{grid-template-columns:1fr}
+.fork .card::before{display:none}
+.forkhead{margin-top:22px; padding:14px 20px; font-size:16px}
+.talk{grid-template-columns:1fr; gap:14px}
+.chat{min-height:300px; max-height:54vh; padding:14px; border-radius:18px}
+.msg{font-size:16px; max-width:92%; padding:11px 15px}
+.taglegend{font-size:13.5px; gap:8px; margin-top:14px}
+.tz{border-radius:18px}
+.tz-head{padding:13px 16px}
+.row{grid-template-columns:92px 1fr; gap:10px; padding:9px 16px}
+.row .k{font-size:13.5px}
+.row .v{font-size:15.5px}
+.ctrl{gap:8px; margin-top:12px}
+.ctrl button{padding:11px 16px; font-size:15px}
+.ctrl .seg.spdseg{margin-top:0}
+.ctrl .seg.spdseg button{padding:9px 12px; font-size:14px}
+.hintline{width:100%; font-size:13.5px}
+.sum{padding:14px 16px}
+.sum-row{grid-template-columns:100px 1fr; font-size:15px}
+.minichat{max-width:100%; margin:0; min-height:0; padding:12px}
+.mc-body{min-height:230px; padding:12px}
+.mc-msg{font-size:14px}
+.big{font-size:44px}
+.big.take{font-size:28px}
+.sticky-wrap{height:auto}
+.stage{position:static; height:auto; padding:44px 0; display:block}
+.steps{grid-template-columns:1fr; gap:15px}
+.railline, .railfill{display:none}
+.step{display:grid; grid-template-columns:54px 1fr; column-gap:13px; row-gap:1px; text-align:left; align-items:start}
+.step .ball{grid-row:1 / span 2; width:54px; height:54px; font-size:18px}
+.step.on .ball{transform:none; box-shadow:none}
+.step h3{grid-column:2; margin-top:0; font-size:19px}
+.step .sub{grid-column:2; min-height:0; max-width:none; padding:0; margin:2px 0 0}
+.stage-note{display:none}
+.hypo{grid-template-columns:1fr; gap:18px}
+.orbit{display:none}
+.hypolist{display:grid}
+.ver{grid-template-columns:42px 1fr; gap:12px; padding:12px 14px}
+.ver .letter{width:42px; height:42px; font-size:17px}
+.ver small{font-size:13.5px}
+.calcwrap{grid-template-columns:1fr; gap:16px}
+.panel{padding:18px; border-radius:18px}
+.slider-lab b{font-size:34px}
+.seg{margin-top:16px}
+.out{gap:10px}
+.out .cell{padding:14px 15px; border-radius:12px}
+.out .cell b{font-size:26px}
+.slotwrap{grid-template-columns:1fr}
+.calhead{flex-direction:column; align-items:flex-start; gap:2px}
+.slots{gap:6px; margin-top:12px}
+.slot{border-radius:10px; font-size:14px}
+.slotlegend{font-size:14px; gap:12px}
+.plan-row{font-size:15px}
+.plan-row span{font-size:13.5px}
+.jira{max-width:100%; border-radius:18px}
+.jira-row, .fin-row{grid-template-columns:100px 1fr; font-size:15px}
+.fingrid{grid-template-columns:1fr; gap:22px}
+.fincard{max-width:100%; margin:0; animation:none}
+.final h2{font-size:clamp(26px,7vw,38px)}
+.final .chain{margin-top:26px; gap:8px}
+#dots{display:none}
+#vsw{top:auto; right:auto; left:50%; transform:translateX(-50%); bottom:calc(10px + env(safe-area-inset-bottom, 0px)); padding:4px}
+#vsw button{padding:10px 15px; font-size:13.5px; white-space:nowrap}
+.hello{min-height:100svh}
+.hello > .kicker{top:22px; font-size:12.5px}
+.hello > .scrollhint{bottom:calc(76px + env(safe-area-inset-bottom, 0px)); margin:0}
+.hello-h .l1{font-size:15px}
+.hello-h .l2{font-size:clamp(40px,12.5vw,60px)}
+.hello-h .l3{font-size:18.5px}
+.hello-h .l4{font-size:21px}
+.fdot{display:none}
+footer{padding:24px 0 100px}
+footer .wrap{flex-direction:column; gap:5px; font-size:14px}
+.foot-grid{grid-template-columns:1fr}
+html.anim .rise{transform:translateY(16px)}
+.rise{transition-duration:.5s}
+.d4, .d5, .d6{transition-delay:.24s}
+.fincard{animation:cardbob 6.5s ease-in-out infinite}
+}
+
+/* тот же набор — если страница открыта в узком окне телефона внутри широкого фрейма */
+html.mob body{font-size:17px}
+html.mob .wrap{padding:0 18px}
+html.mob section{padding:44px 0}
+html.mob h1{font-size:clamp(32px,8.6vw,50px)}
+html.mob h2{font-size:clamp(24px,6.4vw,34px); line-height:1.14}
+html.mob h3{font-size:19px}
+html.mob .lead{font-size:16.5px; margin-top:13px; max-width:none}
+html.mob .kicker{margin-bottom:13px; font-size:12.5px}
+html.mob .card{padding:18px 17px; border-radius:18px}
+html.mob .card p.body{font-size:16px; margin-top:10px}
+html.mob .card:hover{transform:none; box-shadow:none}
+html.mob .sub{font-size:14.5px}
+html.mob .cards{gap:10px}
+html.mob .c4, .c3, .c2{grid-template-columns:1fr}
+html.mob .cards, .ba, .talk, .calcwrap, .slotwrap, .hypo, .fork, .forkwrap, .hugegrid, .rail, .fingrid{margin-top:22px !important}
+html.mob .quote{margin-top:24px !important; padding:2px 0 2px 16px}
+html.mob .quote p{font-size:18px; line-height:1.35}
+html.mob .quote span{margin-top:9px; font-size:14px}
+html.mob .hero{min-height:0; padding-top:0}
+html.mob #s-start{padding:44px 0 !important}
+html.mob .hero-grid{grid-template-columns:1fr; gap:20px}
+html.mob .hero-meta{margin-top:20px; gap:8px}
+html.mob .chip{font-size:14px; padding:8px 13px}
+html.mob .scrollhint{margin-top:22px; font-size:14px}
+html.mob .tick{padding:11px 0}
+html.mob .tick .seq{font-size:14px}
+html.mob .hugegrid{grid-template-columns:1fr; gap:14px}
+html.mob .huge{font-size:clamp(44px,15vw,64px)}
+html.mob .ba{grid-template-columns:1fr; gap:10px}
+html.mob .ba .arrow{transform:rotate(90deg); font-size:24px}
+html.mob .ba ul{margin-top:10px; padding-left:18px}
+html.mob .ba li{font-size:16px; margin-bottom:7px}
+html.mob .fork{grid-template-columns:1fr}
+html.mob .fork .card::before{display:none}
+html.mob .forkhead{margin-top:22px; padding:14px 20px; font-size:16px}
+html.mob .talk{grid-template-columns:1fr; gap:14px}
+html.mob .chat{min-height:300px; max-height:54vh; padding:14px; border-radius:18px}
+html.mob .msg{font-size:16px; max-width:92%; padding:11px 15px}
+html.mob .taglegend{font-size:13.5px; gap:8px; margin-top:14px}
+html.mob .tz{border-radius:18px}
+html.mob .tz-head{padding:13px 16px}
+html.mob .row{grid-template-columns:92px 1fr; gap:10px; padding:9px 16px}
+html.mob .row .k{font-size:13.5px}
+html.mob .row .v{font-size:15.5px}
+html.mob .ctrl{gap:8px; margin-top:12px}
+html.mob .ctrl button{padding:11px 16px; font-size:15px}
+html.mob .ctrl .seg.spdseg{margin-top:0}
+html.mob .ctrl .seg.spdseg button{padding:9px 12px; font-size:14px}
+html.mob .hintline{width:100%; font-size:13.5px}
+html.mob .sum{padding:14px 16px}
+html.mob .sum-row{grid-template-columns:100px 1fr; font-size:15px}
+html.mob .minichat{max-width:100%; margin:0; min-height:0; padding:12px}
+html.mob .mc-body{min-height:230px; padding:12px}
+html.mob .mc-msg{font-size:14px}
+html.mob .big{font-size:44px}
+html.mob .big.take{font-size:28px}
+html.mob .sticky-wrap{height:auto}
+html.mob .stage{position:static; height:auto; padding:44px 0; display:block}
+html.mob .steps{grid-template-columns:1fr; gap:15px}
+html.mob .railline, html.mob .railfill{display:none}
+html.mob .step{display:grid; grid-template-columns:54px 1fr; column-gap:13px; row-gap:1px; text-align:left; align-items:start}
+html.mob .step .ball{grid-row:1 / span 2; width:54px; height:54px; font-size:18px}
+html.mob .step.on .ball{transform:none; box-shadow:none}
+html.mob .step h3{grid-column:2; margin-top:0; font-size:19px}
+html.mob .step .sub{grid-column:2; min-height:0; max-width:none; padding:0; margin:2px 0 0}
+html.mob .stage-note{display:none}
+html.mob .hypo{grid-template-columns:1fr; gap:18px}
+html.mob .orbit{display:none}
+html.mob .hypolist{display:grid}
+html.mob .ver{grid-template-columns:42px 1fr; gap:12px; padding:12px 14px}
+html.mob .ver .letter{width:42px; height:42px; font-size:17px}
+html.mob .ver small{font-size:13.5px}
+html.mob .calcwrap{grid-template-columns:1fr; gap:16px}
+html.mob .panel{padding:18px; border-radius:18px}
+html.mob .slider-lab b{font-size:34px}
+html.mob .seg{margin-top:16px}
+html.mob .out{gap:10px}
+html.mob .out .cell{padding:14px 15px; border-radius:12px}
+html.mob .out .cell b{font-size:26px}
+html.mob .slotwrap{grid-template-columns:1fr}
+html.mob .calhead{flex-direction:column; align-items:flex-start; gap:2px}
+html.mob .slots{gap:6px; margin-top:12px}
+html.mob .slot{border-radius:10px; font-size:14px}
+html.mob .slotlegend{font-size:14px; gap:12px}
+html.mob .plan-row{font-size:15px}
+html.mob .plan-row span{font-size:13.5px}
+html.mob .jira{max-width:100%; border-radius:18px}
+html.mob .jira-row, html.mob .fin-row{grid-template-columns:100px 1fr; font-size:15px}
+html.mob .fingrid{grid-template-columns:1fr; gap:22px}
+html.mob .fincard{max-width:100%; margin:0; animation:none}
+html.mob .final h2{font-size:clamp(26px,7vw,38px)}
+html.mob .final .chain{margin-top:26px; gap:8px}
+html.mob #dots{display:none}
+html.mob #vsw{top:auto; right:auto; left:50%; transform:translateX(-50%); bottom:calc(10px + env(safe-area-inset-bottom, 0px)); padding:4px}
+html.mob #vsw button{padding:10px 15px; font-size:13.5px; white-space:nowrap}
+html.mob .hello{min-height:100svh}
+html.mob .hello > .kicker{top:22px; font-size:12.5px}
+html.mob .hello > .scrollhint{bottom:calc(76px + env(safe-area-inset-bottom, 0px)); margin:0}
+html.mob .hello-h .l1{font-size:15px}
+html.mob .hello-h .l2{font-size:clamp(40px,12.5vw,60px)}
+html.mob .hello-h .l3{font-size:18.5px}
+html.mob .hello-h .l4{font-size:21px}
+html.mob .fdot{display:none}
+html.mob footer{padding:24px 0 100px}
+html.mob footer .wrap{flex-direction:column; gap:5px; font-size:14px}
+html.mob .foot-grid{grid-template-columns:1fr}
+html.anim.mob .rise{transform:translateY(16px)}
+html.mob .rise{transition-duration:.5s}
+html.mob .d4, html.mob .d5, html.mob .d6{transition-delay:.24s}
+html.mob .fincard{animation:cardbob 6.5s ease-in-out infinite}
+
+@media(max-width:420px){
+  .hypolist{grid-template-columns:1fr}
+  #vsw button{padding:9px 12px; font-size:12.5px}
+}
+html.mob .hypolist{grid-template-columns:1fr}
+
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  /* убираем движение и зацикленные анимации, плавное проявление оставляем */
+  .orb i, .oc, .ring, .blob, .fdot, .bub, .tick-in, .fincard, .orb b,
+  .jira-head .pulse::before, .fin-head .pulse::before, .scrollhint em::after,
+  .typing i, .mc-typing i{animation:none !important}
+  html.anim .rise{transform:none}
+  html.anim .ln i, html.anim .hello-h span > i{transform:none; animation:none}
+  html.anim .fadeup{opacity:1; transform:none; animation:none}
+  html.anim .hello-h em{background-size:100% 38%; animation:none}
+  html.anim .jira-row{transform:none}
+  .msg, .mc-msg, .fin-row, .stage-note.flip{animation:none !important}
+  .card:hover{transform:none}
+}
+</style>
+</head>
+<body class="v-team">
+
+<div id="bar"></div>
+<nav id="dots" aria-label="разделы"></nav>
+<div id="vsw" role="group" aria-label="версия страницы">
+  <button class="on" data-v="team">для команды CVM</button>
+  <button data-v="client">для заказчика</button>
+</div>
+
+<!-- ═══ первый баннер ═══ -->
+<header class="hello" id="s-hello" data-nav="старт">
+  <div class="bgfx" aria-hidden="true">
+    <i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i>
+    <i class="ring r1"></i><i class="ring r2"></i>
+    <i class="fdot" style="left:11%;top:26%;--fd:9s"><b></b><span>бриф</span></i>
+    <i class="fdot" style="left:76%;top:21%;--fd:12s"><b></b><span>гипотезы</span></i>
+    <i class="fdot" style="left:7%;top:64%;--fd:11s"><b></b><span>цифры</span></i>
+    <i class="fdot" style="left:80%;top:68%;--fd:10s"><b></b><span>дата рассылки</span></i>
+    <i class="fdot" style="left:16%;top:84%;--fd:13s"><b></b><span>задача в Jira</span></i>
+  </div>
+  <div class="kicker fadeup">CVM B2B · email-маркетинг</div>
+  <div class="wrap">
+    <h1 class="hello-h">
+      <span class="l1"><i>воспользуйтесь нашим</i></span>
+      <span class="l2"><i>ИИ-агентом</i></span>
+      <span class="l3"><i>для запуска коммуникаций</i></span>
+      <span class="l4"><i>в <em>CVM B2B</em></i></span>
+    </h1>
+  </div>
+  <div class="scrollhint fadeup f2"><em></em> листайте вниз</div>
+</header>
+
+<!-- ═══ одна точка входа ═══ -->
+<section class="hero" id="s-start" data-nav="одна точка входа" style="padding:0">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="kicker rise">что это</div>
+        <h1 style="font-size:clamp(34px,5.4vw,88px)"><span class="ln"><i>одна точка</i></span><span class="ln"><i>входа</i></span></h1>
+        <p class="lead rise d2">ИИ-агент помогает с рассылкой: проводит интервью, заполняет бриф,
+          формулирует гипотезы, предлагает свободные даты отправки и создаёт задачу в Jira</p>
+        <div class="hero-meta rise d3">
+          <span class="chip">интервью → бриф</span>
+          <span class="chip">гипотезы и ABCD</span>
+          <span class="chip">слоты отправки</span>
+          <span class="chip">задача в Jira</span>
+        </div>
+        <div class="scrollhint rise d4"><em></em> крутите — замысел собирается по шагам</div>
+      </div>
+      <div class="minichat rise d2" id="mchat" aria-hidden="true">
+        <div class="mc-head">
+          <span class="mc-dash"><i class="on"></i><i></i><i></i><i></i><i></i></span>
+          <span class="mc-ttl">чат с заказчиком</span>
+        </div>
+        <div class="mc-body" id="mcBody"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="tick" aria-hidden="true">
+  <div class="tick-in">
+    <span class="seq"><b>интервью</b><em>→</em><b>бриф</b><em>→</em><b>гипотезы</b><em>→</em><b>ABCD-тест</b><em>→</em><b>прогноз цифр</b><em>→</em><b>слот отправки</b><em>→</em><b>задача в Jira</b><em>→</em></span>
+    <span class="seq"><b>интервью</b><em>→</em><b>бриф</b><em>→</em><b>гипотезы</b><em>→</em><b>ABCD-тест</b><em>→</em><b>прогноз цифр</b><em>→</em><b>слот отправки</b><em>→</em><b>задача в Jira</b><em>→</em></span>
+  </div>
+</div>
+
+<!-- ═══ зачем ═══ -->
+<section id="s-why" data-nav="проблема">
+  <div class="wrap">
+
+    <!-- проблема — версия для команды -->
+    <div data-ver="team">
+      <div class="kicker rise">зачем именно сейчас</div>
+      <h2 class="rise d1">заказчиков становится кратно больше, а процесс остаётся прежним</h2>
+
+      <div class="hugegrid">
+        <div class="huge rise d2"><em>10</em> <span class="arrow">→</span> <span class="num" id="cnt">10</span><em>+</em></div>
+        <div class="rise d3">
+          <p class="lead" style="margin-top:0">переход на новую операционную модель и уклон на функции
+            от филиалов: заказчиков в CVM и маркетинге становится не 6–10, как раньше,
+            а 70+. это и системные, регулярные коммуникации, и разовые пилоты
+            по продвижению продуктов и гипотез</p>
+        </div>
+      </div>
+
+      <div class="quote rise d3">
+        <p>менеджер принёс гипотезу про госзакупки для малого бизнеса. но такой человек
+          не всегда знаком с процессом: не знает ни CVM, ни календаря отправок,
+          ни к кому идти. сегодня для него это стена</p>
+        <span>ровно этот сценарий агент и закрывает: он не требует знать процесс</span>
+      </div>
+    </div>
+
+    <!-- проблема — версия для заказчика -->
+    <div data-ver="client">
+      <div class="kicker rise">с чего всё начинается</div>
+      <h2 class="rise d1">заказчик не всегда знаком с процессом — и не до конца понимает, что получит на выходе</h2>
+      <p class="lead rise d2">чтобы запустить рассылку, сегодня надо знать «внутреннюю кухню»: какие данные
+        собрать, к кому идти, как встроиться в расписание команд. и даже когда бриф собран,
+        остаётся вопрос — что именно будет на выходе и когда</p>
+
+      <div class="cards c3 lvl rise d3" style="margin-top:44px">
+        <div class="card fill"><p class="sub top">вопрос первый</p><h3>что собрать</h3>
+          <p class="body">какие данные нужны для брифа, какие поля обязательны, а без каких
+            рассылку не запустят — заранее неизвестно</p></div>
+        <div class="card fill"><p class="sub top">вопрос второй</p><h3>к кому идти</h3>
+          <p class="body">процесс распределён между командами: кто принимает задачу, кто верстает,
+            кто отправляет — выясняется по ходу</p></div>
+        <div class="card fill"><p class="sub top">вопрос третий</p><h3>что получу</h3>
+          <p class="body">предмет результата размыт: будет ли тест, какие цифры считать успехом
+            и когда их покажут</p></div>
+      </div>
+
+      <div class="quote rise d3">
+        <p>менеджер принёс хорошую гипотезу про госзакупки для малого бизнеса —
+          рабочую, из живых разговоров с клиентами. но он не знает ни CVM, ни календаря
+          отправок, ни к кому идти. сегодня для него это стена</p>
+        <span>агент снимает этот барьер: он не требует знать процесс</span>
+      </div>
+    </div>
+
+    <!-- решение — общее -->
+    <div class="kicker rise" style="margin-top:clamp(56px,8vh,110px)">решение</div>
+    <h2 class="rise d1">как сейчас и как с агентом</h2>
+
+    <div class="ba" style="margin-top:36px">
+      <div class="card fill rise d4">
+        <p class="sub">как сейчас</p>
+        <h3>вводные собирают вручную — заказчик с MBP</h3>
+        <ul>
+          <li>не вся информация есть для заполнения брифа</li>
+          <li>нет понимания цепочки процесса: к кому идти и что будет дальше</li>
+          <li>каждый спрашивает своё и в своём порядке</li>
+          <li>надо самому встроиться в расписание команд</li>
+        </ul>
+      </div>
+      <div class="arrow rise d5">→</div>
+      <div class="card y rise d6">
+        <p class="sub" style="color:#8a6f00">как с агентом</p>
+        <h3>один разговор — задача в работе</h3>
+        <ul>
+          <li>агент спрашивает по своему списку и ничего не забывает</li>
+          <li>гипотезы и расчёт теста делает сам</li>
+          <li>показывает свободные слоты и принимает выбор даты</li>
+          <li>«под капотом» заводит задачу в Jira и передаёт в процесс планирования CVM</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ интервью ═══ -->
+<section id="s-talk" data-nav="как выглядит">
+  <div class="wrap">
+    <div class="kicker rise">демо · живой разговор</div>
+    <h2 class="rise d1">так выглядит разговор с заказчиком</h2>
+    <p class="lead rise d2">демо на реальном кейсе: видеонаблюдение, заказчик торопится, части
+      информации у него нет. слева разговор, справа — бриф, который заполняется по ходу</p>
+    <div class="taglegend rise d2">пометки в брифе:
+      <span class="tag calc">сделал сам</span>
+      <span class="tag assume">допущение</span>
+      <span class="tag gap">нет данных</span>
+    </div>
+
+    <div class="talk rise d3" style="margin-top:36px">
+      <div>
+        <div class="chat" id="chat"></div>
+        <div class="ctrl">
+          <button id="play">запустить разговор</button>
+          <span class="seg spdseg" id="spdSeg" title="скорость воспроизведения">
+            <button data-s="0.5">×0,5</button>
+            <button class="on" data-s="1">×1</button>
+            <button data-s="2">×2</button>
+          </span>
+          <button class="ghost" id="reset">сначала</button>
+          <span class="hintline" id="prog">0 из 0 реплик</span>
+        </div>
+      </div>
+      <div>
+        <div class="tz">
+          <div class="tz-head"><b>бриф по шаблону</b>
+            <span class="status" id="tzStatus">ожидание</span></div>
+          <div id="rows"></div>
+        </div>
+        <div class="sum" id="sum">
+          <b class="sum-ttl">итог — агент просит подтвердить</b>
+          <div class="sum-row"><span>бриф</span><b>заполнен, 18 полей</b></div>
+          <div class="sum-row"><span>дата отправки</span><b>26 августа</b></div>
+          <div class="sum-row"><span>стоп-факторы</span><b>юридический текст · длина темы</b></div>
+          <p class="sum-warn">если данные не поступят до 22 августа, рассылка 26 августа
+            не будет реализована</p>
+          <div class="sum-ok" id="sumOk">подтверждено заказчиком ✓</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ кто может прийти ═══ -->
+<section id="s-roles" data-nav="кто может прийти" data-ver="team">
+  <div class="wrap">
+    <div class="kicker rise">важное условие</div>
+    <h2 class="rise d1">кто может прийти к агенту</h2>
+    <p class="lead rise d2">точка входа одна, но не каждый сотрудник может поставить задачу
+      и попасть к нам в бэклог. права проверяются на ролевом уровне — до того, как начнётся
+      разговор, а не после того, как бриф собран</p>
+    <div class="cards c3 rise d3" style="margin-top:44px">
+      <div class="card y"><h3>кто заходит</h3>
+        <p class="body">роль определяет, может ли человек ставить задачу в CVM, и какого типа:
+          системная коммуникация, пилот, тест гипотезы</p></div>
+      <div class="card fill"><h3>что видит</h3>
+        <p class="body">свободные слоты, реальные сроки и то, что от него требуется. без хождения
+          по командам и уточнений «а к кому мне вообще идти»</p></div>
+      <div class="card dark"><h3>чего не будет</h3>
+        <p class="body">потока задач от всех подряд. агент — это не открытая форма, а вход
+          с проверкой прав и понятными правилами</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ маршрут ═══ -->
+<div class="sticky-wrap" id="s-pipe" data-nav="маршрут">
+  <div class="stage">
+    <div class="wrap" style="width:100%">
+      <div class="kicker">замысел целиком</div>
+      <h2>что происходит за один разговор с агентом</h2>
+      <div class="rail">
+        <div class="railline"></div><div class="railfill" id="railfill"></div>
+        <div class="steps" id="steps">
+          <div class="step"><div class="ball">01</div><h3>бриф</h3>
+            <p class="sub">агент интервьюирует и заполняет ТЗ</p></div>
+          <div class="step"><div class="ball">02</div><h3>гипотезы</h3>
+            <p class="sub">формулировка захода: тема, прехедер и сущность для ABCD</p></div>
+          <div class="step"><div class="ball">03</div><h3>цифры</h3>
+            <p class="sub">чего ждать — по похожим прошлым рассылкам</p></div>
+          <div class="step"><div class="ball">04</div><h3>дата рассылки</h3>
+            <p class="sub">агент предлагает свободные слоты, заказчик выбирает свой</p></div>
+          <div class="step"><div class="ball">05</div><h3>задача и бронь даты</h3>
+            <p class="sub">агент создаёт задачу в Jira и бронирует дату в расписании отправок</p></div>
+        </div>
+      </div>
+      <div class="stage-note" id="note"><b id="noteT">шаг 01 · бриф</b><p id="noteP">агент задаёт наводящие
+        вопросы — такие, ответы на которые заполняют бриф в нужном формате: идея, целевая аудитория,
+        оффер, всё, что нужно, чтобы история пошла дальше в работу</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ гипотезы ═══ -->
+<section id="s-hypo" data-nav="гипотезы">
+  <div class="wrap">
+    <div class="kicker rise">шаг 02</div>
+    <h2 class="rise d1">13 гипотез в базе, 4 версии в письме</h2>
+    <p class="lead rise d2">агент помогает сформулировать заход: что именно проверять в теме,
+      прехедере и теле письма. в инструкцию зашита методология — DTBD, лестница конверсии. размер
+      шара показывает, сколько гипотез в категории. в один тест идут три гипотезы одного слоя
+      плюс текущая версия как контроль</p>
+
+    <div class="hypo rise d3" style="margin-top:40px">
+      <div class="orbit" id="orbit"></div>
+      <div class="hypolist" aria-hidden="true">
+        <span>грани боли<b>5</b></span>
+        <span>задачи клиента<b>3</b></span>
+        <span>тело письма<b>2</b></span>
+        <span>альтернатива<b>1</b></span>
+        <span>контекст<b>1</b></span>
+        <span>момент понимания<b>1</b></span>
+      </div>
+      <div>
+        <div class="cards c3 lvl" style="margin-bottom:18px">
+          <div class="card fill"><p class="sub top">что проверяем в теме</p><h3>откроют ли</h3>
+            <p class="sub foot">метрика OR</p></div>
+          <div class="card fill"><p class="sub top">что в прехедере</p><h3>усилит ли</h3>
+            <p class="sub foot">метрика OR</p></div>
+          <div class="card fill"><p class="sub top">что в теле</p><h3>кликнут ли</h3>
+            <p class="sub foot">метрика CTOR</p></div>
+        </div>
+        <div class="split" id="split">
+          <div class="ver ctrl-a"><div class="letter">A</div>
+            <div><b>контроль — текст заказчика</b><small>как есть, дословно. не улучшается</small></div></div>
+          <div class="ver"><div class="letter">B</div>
+            <div><b>задача клиента 1</b><small>«смотрите объект с телефона»</small></div></div>
+          <div class="ver"><div class="letter">C</div>
+            <div><b>задача клиента 2</b><small>«камеры без сервера и монтажа»</small></div></div>
+          <div class="ver"><div class="letter">D</div>
+            <div><b>задача клиента 3</b><small>«разберите спор по записи»</small></div></div>
+        </div>
+        <div class="ctrl"><button class="ghost" id="pick">показать отбор в первый тест</button>
+          <span class="hintline">три шара уезжают в сплит, остальные ждут своей очереди</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ развилка ═══ -->
+<section id="s-fork" data-nav="не всем нужен тест">
+  <div class="wrap">
+    <div class="kicker rise">развилка внутри разговора</div>
+    <h2 class="rise d1">любую рассылку можно превратить в тест гипотезы</h2>
+    <p class="lead rise d2">иногда заказчик хочет рассказать о продукте — плановая коммуникация,
+      без теста. агент это учитывает: не навязывает методологию, но предлагает усилить рассылку
+      и проверить гипотезу через ABCD, если случай подходящий</p>
+
+    <div class="forkwrap rise d3">
+      <div class="forkhead">заказчик пришёл с задачей</div>
+    </div>
+    <div class="fork rise d4">
+      <div class="card fill">
+        <h3>просто коммуникация</h3>
+        <p class="body">рассказать о продукте, сообщить об изменении, отработать плановый повод.
+          агент собирает бриф, считает охват, показывает дату — и на этом всё</p>
+        <p class="sub">короткий маршрут: бриф → дата → задача</p>
+      </div>
+      <div class="card y">
+        <h3>проверить гипотезу</h3>
+        <p class="body">агент предлагает: «хотите усилить коммуникацию и заодно проверить гипотезу
+          через ABCD?» если да — помогает сформулировать заход, тему, прехедер и то, что будем
+          сравнивать</p>
+        <p class="sub" style="color:#8a6f00">полный маршрут: бриф → гипотезы → тест → дата → задача</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ что берёт на себя ═══ -->
+<section id="s-take" data-nav="что берёт на себя">
+  <div class="wrap">
+    <div class="kicker rise">почему разговор короткий</div>
+    <h2 class="rise d1">агент спрашивает не всё — многое делает сам</h2>
+    <p class="lead rise d2">в брифе около двадцати полей. заказчику достаются только те, ответ
+      на которые знает он один. остальные агент считает, берёт из справочника или предлагает
+      вариантами</p>
+
+    <div class="cards c3 rise d3" style="margin-top:44px">
+      <div class="card y">
+        <div class="big take">спрашивает</div>
+        <p class="body" style="font-size:18px">продукт и оффер · цена и пробный период · кому
+          отправляем и сколько людей в базе · дата · куда ведёт кнопка · кто согласует юридический текст</p>
+        <p class="sub">это знает только заказчик</p>
+      </div>
+      <div class="card dark">
+        <div class="big take">считает сам</div>
+        <p class="body" style="font-size:18px">сколько нужно базы на тест · какую метрику мерить ·
+          какой прирост считать победой · когда снимать результат · какие даты реальны</p>
+        <p class="sub">эти вопросы заказчику не задаются: он ответит наугад, и тест выйдет пустым</p>
+      </div>
+      <div class="card fill">
+        <div class="big take">предлагает</div>
+        <p class="body" style="font-size:18px">тема · прехедер · заголовок · подпись кнопки ·
+          текст смс — по два-три варианта на выбор, если своего текста у заказчика нет</p>
+        <p class="sub">выбирает человек, агент только даёт из чего</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══ прогноз и выборка ═══ -->
+<section id="s-mde" data-nav="чего ждать">
+  <div class="wrap">
+    <div class="kicker rise">шаг 03</div>
+    <h2 class="rise d1">агент подскажет ожидания по цифрам — ещё до отправки</h2>
+    <p class="lead rise d2">по новому продукту статистики нет. но похожие рассылки уже уходили —
+      значит, можно назвать ожидаемый охват по базе и примерный отклик, сопоставив задачу
+      с ретро-данными</p>
+
+    <div class="cards c3 rise d3" style="margin-top:40px; margin-bottom:14px">
+      <div class="card fill"><h3>берём похожее</h3>
+        <p class="body">схожий продукт, сегмент и тип коммуникации из прошлых рассылок —
+          там, где данные уже есть</p></div>
+      <div class="card fill"><h3>показываем цифры</h3>
+        <p class="body">какой охват по базе и какой отклик обычно получается на таком наборе.
+          не обещание, а порядок величины</p></div>
+      <div class="card y"><h3>определяем достаточность базы</h3>
+        <p class="body">хватит ли выборки, чтобы отличить результат от случайности. если нет —
+          говорим об этом сразу, а не после отправки</p></div>
+    </div>
+
+    <div class="calcwrap rise d4">
+      <div class="panel">
+        <div class="slider-lab"><span class="sub">размер базы на тест</span>
+          <b class="num" id="nOut">12 000</b></div>
+        <input type="range" id="nRange" min="0" max="1000" value="469" aria-label="размер базы">
+        <div class="seg" id="metricSeg">
+          <button class="on" data-p="9.4" data-m="OR">открытия · OR</button>
+          <button data-p="3.82" data-m="CTOR">клики · CTOR</button>
+        </div>
+        <p class="sub" style="margin-top:18px">за точку отсчёта взяты медианы портфеля: открытия
+          9,4 %, клики от открывших 3,82 %. когда по продукту есть свои цифры, агент подставит их</p>
+      </div>
+      <div>
+        <div class="out">
+          <div class="cell y"><span class="sub">минимальная различимая разница</span><b class="num" id="mdeOut">28,6 %</b></div>
+          <div class="cell y"><span class="sub">порог победы</span><b class="num" id="thrOut">+28,6 %</b></div>
+          <div class="cell"><span class="sub">формат теста</span><b id="fmtOut">4 версии</b></div>
+          <div class="cell"><span class="sub">группы</span><b class="num" id="grpOut">4 × 3 000</b></div>
+          <div class="cell wide"><span class="sub">победитель должен дать <span id="metricName">OR</span> не меньше</span>
+            <b class="num" id="tgtOut">12,1 %</b>
+            <p class="sub" id="verdict" style="margin-top:8px">полный цикл доступен, но без запаса</p></div>
+        </div>
+        <svg id="mdechart" viewBox="0 0 640 190" preserveAspectRatio="xMidYMid meet" aria-label="зависимость различимой разницы от размера базы"></svg>
+        <p class="sub">чем больше база, тем тоньше различия видит тест. пунктир — минимальные 20 %</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ слоты ═══ -->
+<section id="s-cal" data-nav="слоты отправки">
+  <div class="wrap">
+    <div class="kicker rise">шаг 04</div>
+    <h2 class="rise d1">свободные слоты вместо «приходите через два месяца»</h2>
+    <p class="lead rise d2">сегодня заказчик узнаёт про загрузку календаря в последнюю очередь.
+      в замысле — наоборот: агент сразу показывает занятость и свободные даты, как в графике
+      у монтажников. на ближайшие недели всё занято — вот свободные слоты в конце месяца.
+      выберите дату — агент пересчитает календарь теста вокруг неё</p>
+
+    <div class="slotwrap rise d3">
+      <div>
+        <div class="calhead"><b>август 2026</b><span>расписание отправок CVM</span></div>
+        <div class="slots" id="slots"></div>
+        <div class="slotlegend">
+          <span><i style="background:var(--y3)"></i>свободно</span>
+          <span><i style="background:var(--f3)"></i>занято</span>
+          <span><i style="background:var(--y)"></i>выбранная дата</span>
+        </div>
+      </div>
+      <div>
+        <div class="cards c2" style="grid-template-columns:1fr">
+          <div class="card fill"><h3>заказчик видит реальность сразу</h3>
+            <p class="body">не «а можно на следующей неделе?», а конкретные даты, на которые
+              команда может взять работу. вопрос «fast или long трек» решается на входе</p></div>
+          <div class="card"><h3>агент считает даты вокруг слота</h3>
+            <div id="plan"></div>
+            <p class="sub" id="planHint" style="margin-top:12px">сроки в демо условные — реальные агент возьмёт из регламента</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ задача ═══ -->
+<section id="s-jira" data-nav="задача в работу">
+  <div class="wrap">
+    <div class="kicker rise">шаг 05</div>
+    <h2 class="rise d1">«под капотом» появляется задача — и уходит в процесс планирования CVM</h2>
+    <p class="lead rise d2">для заказчика разговор на этом заканчивается. для команды он ровно
+      здесь начинается: задача в Jira, со всеми полями брифа, гипотезами, метрикой и выбранной
+      датой. ничего не надо переспрашивать и переносить руками</p>
+
+    <div class="cards c2" style="margin-top:40px">
+      <div class="jira rise">
+        <div class="jira-head"><span>CVM · рассылка</span><span class="pulse">создано агентом</span></div>
+        <div class="jira-body">
+          <b class="ttl">видеонаблюдение — промо, август</b>
+          <div class="jira-row"><span>заказчик</span><div>менеджер продукта</div></div>
+          <div class="jira-row"><span>тип</span><div>промо с ABCD-тестом</div></div>
+          <div class="jira-row"><span>сегмент</span><div>СМБ · розница, склады, стройка</div></div>
+          <div class="jira-row"><span>база</span><div>12 000 · 4 версии по 3 000</div></div>
+          <div class="jira-row"><span>метрика</span><div>открытия · порог +28,6 %</div></div>
+          <div class="jira-row"><span>дата</span><div>26 августа, слот подтверждён</div></div>
+          <div class="jira-row"><span>блокеры</span><div>юридический текст, длина темы</div></div>
+        </div>
+      </div>
+      <div class="rise d2">
+        <div class="card acc" style="margin-bottom:14px"><h3>бриф готов ≠ можно отправлять</h3>
+          <p class="body">агент всегда показывает оба статуса. пробел не мешает отдать бриф
+            в вёрстку — он мешает нажать «отправить». это страховка от ошибки, которая сейчас
+            всплывает в последний день</p></div>
+        <div class="card dark"><h3>решение остаётся за человеком</h3>
+          <p class="body">агент готовит, считает и показывает. он не отправляет рассылку сам
+            и не двигает чужие слоты. цель — убрать из процесса рутину и забытые поля,
+            а не людей</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ финал ═══ -->
+<section class="final" id="s-final" data-nav="что даёт заказчику">
+  <div class="wrap">
+    <div class="fingrid">
+    <div>
+    <div class="kicker rise">что это даёт заказчику</div>
+    <h2 class="rise d1">одно обращение — <em>и рассылка в плане CVM</em></h2>
+    <p class="lead rise d2">общение с агентом — в удобное время, без очередей и знания процесса.
+      агент помогает понять, чего хочет заказчик, и заполняет бриф. внутри появляются гипотезы
+      и ABCD-тест, чтобы выбрать лучший вариант, виден прогноз цифр. остаётся выбрать свободную
+      дату — и задача уже в Jira</p>
+    <div class="chain rise d3">
+      <span class="chip">бриф</span><span class="arrow">→</span>
+      <span class="chip">гипотезы</span><span class="arrow">→</span>
+      <span class="chip">цифры</span><span class="arrow">→</span>
+      <span class="chip">дата</span><span class="arrow">→</span>
+      <span class="chip">задача в Jira</span>
+    </div>
+    </div>
+    <div class="fincard rise d2" aria-hidden="true">
+      <div class="fin-head"><span>CVM · рассылка</span><span class="pulse">создано агентом</span></div>
+      <div class="fin-body">
+        <b class="fin-ttl">видеонаблюдение — промо</b>
+        <div id="finRows"></div>
+        <div class="fin-status" id="finStatus">агент собирает задачу…</div>
+      </div>
+    </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>CVM · email-маркетинг B2B</span>
+    <span>ИИ-агент для создания брифа и гипотез · концепт</span>
+  </div>
+</footer>
+
+<script>
+function revealAll(){
+  try{
+    document.documentElement.classList.remove('anim');
+    var els = document.querySelectorAll('.rise, .fadeup, .jira-row, .fin-row');
+    for(var i = 0; i < els.length; i++){
+      els[i].classList.add('in');
+      els[i].style.opacity = '1';
+      els[i].style.transform = 'none';
+    }
+    var j = document.querySelector('.jira'); if(j) j.classList.add('in');
+  }catch(e){}
+}
+
+function guard(name, fn){
+  try{ fn(); }
+  catch(e){ revealAll(); if(window.console) console.warn('block failed: ' + name, e); }
+}
+
+(function(){
+'use strict';
+var reduce = false;
+try{ reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
+
+/* навигация-точки */
+var nav = document.getElementById('dots'), bar = document.getElementById('bar');
+var secs = [], links = [];
+function buildNav(){
+  nav.innerHTML = '';
+  secs = [].slice.call(document.querySelectorAll('[data-nav]')).filter(function(s){
+    return s.offsetParent !== null || s.getClientRects().length;
+  });
+  secs.forEach(function(s){
+    var a = document.createElement('a');
+    a.href = '#' + s.id;
+    a.setAttribute('aria-label', s.dataset.nav);
+    a.innerHTML = '<span>' + s.dataset.nav + '</span>';
+    nav.appendChild(a);
+  });
+  links = [].slice.call(nav.children);
+}
+buildNav();
+
+/* переключатель версий */
+var vswBtns = [].slice.call(document.querySelectorAll('#vsw button'));
+function setVersion(v){
+  document.body.classList.toggle('v-team', v === 'team');
+  document.body.classList.toggle('v-client', v === 'client');
+  vswBtns.forEach(function(b){ b.classList.toggle('on', b.dataset.v === v); });
+  buildNav();
+  onScroll();
+}
+vswBtns.forEach(function(b){
+  b.addEventListener('click', function(){ setVersion(b.dataset.v); });
+});
+
+
+
+/* счётчик 10 → 70 */
+var cnt = document.getElementById('cnt'), cntDone = false;
+function now(){ return (window.performance && performance.now) ? performance.now() : +new Date(); }
+function runCounter(){
+  if(!cnt) return;
+  if(reduce){ cnt.textContent = '70'; return; }
+  var t0 = now();
+  (function stepFn(){
+    var k = Math.min(1, (now() - t0) / 1400);
+    cnt.textContent = Math.round(10 + 60 * (1 - Math.pow(1 - k, 3)));
+    if(k < 1) requestAnimationFrame(stepFn);
+  })();
+}
+
+/* мини-чат в блоке «одна точка входа» */
+var mcBody = document.getElementById('mcBody');
+var mcDashes = [].slice.call(document.querySelectorAll('.mc-dash i'));
+var MC = [
+  ['c','нужна рассылка по новорегам'],
+  ['a','до какой даты и что продаём?'],
+  ['c','до конца месяца, тариф за 500'],
+  ['a','цель — открытия или заявки?'],
+  ['c','заявки. база тысяч пятнадцать'],
+  ['a','принял: считаю тест и предлагаю даты']
+];
+function mcType(on){
+  var t = mcBody.querySelector('.mc-typing');
+  if(on && !t){
+    var d = document.createElement('div');
+    d.className = 'mc-typing';
+    d.innerHTML = '<i></i><i></i><i></i>';
+    mcBody.appendChild(d);
+  } else if(!on && t){ t.remove(); }
+}
+var mcStep = 0;
+function mcNext(){
+  if(mcStep >= MC.length){
+    mcType(true);
+    setTimeout(function(){
+      mcType(false); mcBody.innerHTML = ''; mcStep = 0;
+      mcDashes.forEach(function(d, i){ d.classList.toggle('on', i === 0); });
+      setTimeout(mcNext, 600);
+    }, 1600);
+    return;
+  }
+  mcType(true);
+  setTimeout(function(){
+    mcType(false);
+    var m = MC[mcStep];
+    var d = document.createElement('div');
+    d.className = 'mc-msg ' + m[0];
+    d.textContent = m[1];
+    mcBody.appendChild(d);
+    mcStep++;
+    var lit = Math.max(1, Math.round(mcStep * mcDashes.length / MC.length));
+    mcDashes.forEach(function(x, i){ x.classList.toggle('on', i < lit); });
+    setTimeout(mcNext, 800);
+  }, 700);
+}
+if(reduce){
+  MC.forEach(function(m){
+    var d = document.createElement('div');
+    d.className = 'mc-msg ' + m[0];
+    d.textContent = m[1];
+    mcBody.appendChild(d);
+  });
+  mcDashes.forEach(function(x){ x.classList.add('on'); });
+}
+var mcStarted = reduce;
+/* лёгкий параллакс карточки чата */
+var mchat = document.getElementById('mchat');
+if(!reduce && matchMedia('(pointer:fine)').matches){
+  document.querySelector('.hero').addEventListener('mousemove', function(ev){
+    var x = ev.clientX / innerWidth - .5, y = ev.clientY / innerHeight - .5;
+    mchat.style.transform = 'translate(' + (x * 10) + 'px,' + (y * 10) + 'px)';
+  });
+}
+
+/* маршрут — шаг за шагом по скроллу */
+var pipe = document.getElementById('s-pipe');
+var stepEls = [].slice.call(document.querySelectorAll('#steps .step'));
+var railfill = document.getElementById('railfill');
+var note = document.getElementById('note');
+var noteT = document.getElementById('noteT'), noteP = document.getElementById('noteP');
+var notes = [
+  ['шаг 01 · бриф', 'агент задаёт наводящие вопросы — такие, ответы на которые заполняют бриф в нужном формате: идея, целевая аудитория, оффер, всё, что нужно, чтобы история пошла дальше в работу'],
+  ['шаг 02 · гипотезы', 'если заказчик хочет не только рассказать о продукте, а проверить заход, агент помогает с формулировкой гипотезы: тема, прехедер и то, что будем сравнивать в ABCD'],
+  ['шаг 03 · цифры', 'по новому продукту статистики нет, но похожие рассылки уже уходили. агент сопоставляет задачу с ретро-данными и называет ожидаемый охват и отклик — до того, как что-то отправлено'],
+  ['шаг 04 · дата рассылки', 'агент показывает занятость календаря и предлагает свободные слоты. заказчик выбирает дату рассылки сам — и сразу видит, реально ли уложиться в его сроки'],
+  ['шаг 05 · задача и бронь даты', 'агент создаёт задачу в Jira со всеми полями брифа, гипотезами, метрикой и датой, бронирует слот в расписании отправок — и задача уходит в процесс планирования CVM']
+];
+var lastStep = -1;
+function pipeScroll(){
+  var r = pipe.getBoundingClientRect(), h = pipe.offsetHeight - window.innerHeight;
+  if(h <= 0) return;
+  var p = Math.min(1, Math.max(0, -r.top / h));
+  var i = Math.min(4, Math.floor(p * 5.0001));
+  railfill.style.width = (Math.min(1, p * 1.04) * 100) + '%';
+  if(i !== lastStep){
+    lastStep = i;
+    stepEls.forEach(function(el, k){
+      el.classList.toggle('on', k === i);
+      el.classList.toggle('done', k < i);
+    });
+    noteT.textContent = notes[i][0];
+    noteP.textContent = notes[i][1];
+    if(!reduce){
+      note.classList.remove('flip');
+      void note.offsetWidth;
+      note.classList.add('flip');
+    }
+  }
+}
+
+/* на мобильном рельса статична — шаги зажигаются по очереди при появлении */
+var pipeSeqDone = false;
+function pipeSequence(){
+  pipeSeqDone = true;
+  stepEls.forEach(function(el, k){
+    setTimeout(function(){
+      stepEls.forEach(function(x, i){
+        x.classList.toggle('on', i === k);
+        x.classList.toggle('done', i < k);
+      });
+    }, reduce ? 0 : 220 + k * 420);
+  });
+}
+
+function onScroll(){
+  var st = window.scrollY || document.documentElement.scrollTop;
+  var max = document.documentElement.scrollHeight - window.innerHeight;
+  bar.style.width = (max > 0 ? (st / max) * 100 : 0) + '%';
+  var cur = 0;
+  secs.forEach(function(s, i){ if(s.getBoundingClientRect().top <= window.innerHeight * 0.42) cur = i; });
+  links.forEach(function(a, i){ a.classList.toggle('on', i === cur); });
+  if(typeof chat !== 'undefined' && chat && !playing && step === 0){
+    var cr = chat.getBoundingClientRect();
+    if(cr.top < window.innerHeight * 0.75 && cr.bottom > 0) play();
+  }
+  pipeScroll();
+}
+var ticking = false;
+addEventListener('scroll', function(){
+  if(ticking) return; ticking = true;
+  requestAnimationFrame(function(){ onScroll(); ticking = false; });
+}, {passive:true});
+addEventListener('resize', onScroll);
+stepEls[0].classList.add('on');
+onScroll();
+
+/* ═══ интервью ═══ */
+var FIELDS = [
+  {k:'продукт',                id:'prod'},
+  {k:'кто отвечает',           id:'exp'},
+  {k:'тип задачи',             id:'type'},
+  {k:'кому отправляем',        id:'ca'},
+  {k:'целевое действие',       id:'goal'},
+  {k:'оффер и цена',           id:'offer'},
+  {k:'юридический текст',      id:'legal'},
+  {k:'размер базы',            id:'base'},
+  {k:'тема',                   id:'subj'},
+  {k:'прехедер',               id:'pre'},
+  {k:'кнопка',                 id:'btn'},
+  {k:'смс',                    id:'sms'},
+  {k:'куда ведёт кнопка',      id:'url'},
+  {k:'чего ждать',             id:'fcast'},
+  {k:'формат теста',           id:'fmt'},
+  {k:'порог победы',           id:'mde'},
+  {k:'дата отправки',          id:'date'},
+  {k:'задача',                 id:'task'}
+];
+var SCRIPT = [
+  {w:'m', t:'нужна рассылка по видеонаблюдению. надо в этом месяце, у меня минут десять'},
+  {w:'a', t:'понял: продукт — видеонаблюдение, срок — до конца августа. сразу уточню: вы хотите просто рассказать о продукте или заодно проверить гипотезу — что именно цепляет аудиторию?',
+   f:[['prod','видеонаблюдение','']]},
+  {w:'m', t:'а можно и то и то? рассказать надо, но интересно, что сработает'},
+  {w:'a', t:'можно. тогда собираем рассылку и добавляем ABCD-тест: одна и та же коммуникация уйдёт в четырёх версиях. кто отвечает за продукт — на кого ссылаться?',
+   f:[['type','промо + ABCD-тест','']]},
+  {w:'m', t:'я и отвечаю. ссылка на сайте вроде cloud.beeline.ru/videonablyudenie/'},
+  {w:'a', t:'записал со слов, ссылку сам не проверял — помечаю допущением. кому отправляем?',
+   f:[['exp','менеджер продукта',''],['url','cloud.beeline.ru/videonablyudenie/','assume']]},
+  {w:'m', t:'СМБ — розница, склады, немного стройки. заявку хочу получить'},
+  {w:'a', t:'принято. что предлагаем — есть спецусловие: цена, пробный период, акция до даты?',
+   f:[['ca','СМБ · розница, склады, стройка',''],['goal','оставить заявку','']]},
+  {w:'m', t:'установка бесплатно при подключении на год, первые 14 дней бесплатно, от 1 200 ₽/мес за камеру'},
+  {w:'a', t:'есть цена и пробный период — значит нужен юридический текст и рекламная маркировка. сам я его не пишу, это риск. кто у вас согласует?',
+   f:[['offer','установка 0 ₽ на год · 14 дней бесплатно · от 1 200 ₽/мес','']]},
+  {w:'m', t:'а надо? ну ладно, спрошу'},
+  {w:'a', t:'ставлю как пробел и блокер запуска: бриф отдам, а отправить без него не сможем. сколько людей в выгрузке?',
+   f:[['legal','нет данных · блокирует запуск','gap']]},
+  {w:'m', t:'тысяч пятнадцать вроде'},
+  {w:'a', t:'«вроде» — беру нижнюю границу, 12 000. по видеонаблюдению своей статистики нет, но похожие рассылки на СМБ уходили: там открытия были около 9 %, отклик порядка 3–4 % от открывших. это ориентир, не обещание.',
+   f:[['base','15 000 со слов → 12 000 расчётных','assume'],
+      ['fcast','≈9 % открытий, 3–4 % кликов — по похожим рассылкам','calc']]},
+  {w:'a', t:'на такой базе тест разложится на четыре версии по 3 000. увидим разницу подходов, а не формулировок: победой считаем прирост от 28,6 %.',
+   f:[['fmt','4 версии по 3 000','calc'],['mde','+28,6 % → OR не ниже 12,1 %','calc']]},
+  {w:'m', t:'текст есть кусками. тема «Видеонаблюденеие для бизнеса от билайн», кнопка «Оставить заявку»'},
+  {w:'a', t:'в теме опечатка — «видеонаблюденеие». сам не правлю: показываю, решение за вами. и 38 знаков вместо 35 — тема обрежется в списке писем.',
+   f:[['subj','«Видеонаблюденеие…» · 38/35','gap'],['btn','Оставить заявку · 15/27','']]},
+  {w:'m', t:'опечатку поправь. сокращать не надо'},
+  {w:'a', t:'правлю по вашему разрешению и фиксирую «было / стало». прехедера нет — предложу три варианта. смс нужна?',
+   f:[['subj','«Видеонаблюдение для бизнеса от билайн» · 37/35','gap']]},
+  {w:'m', t:'смс нужна, текста нет — напиши сам'},
+  {w:'a', t:'готово. теперь даты: на эту неделю слотов нет, ближайшие свободные — 26 и 28 августа. что берём?',
+   f:[['pre','Камеры, облако и доступ с телефона · 34/120',''],['sms','220 знаков · 4 смс','']]},
+  {w:'m', t:'26-е'},
+  {w:'a', t:'слот забронирован в расписании отправок. проверьте итог справа: бриф заполнен, дата — 26 августа, стоп-факторы — юридический текст и длина темы. подтверждаете?',
+   f:[['date','26 августа, слот забронирован в расписании','']], sum:1},
+  {w:'m', t:'да, подтверждаю'},
+  {w:'a', t:'принято. задача создана в Jira и ушла в процесс планирования CVM. напоминаю: если юридический текст не поступит до 22 августа, рассылка 26 августа не будет реализована.',
+   f:[['task','создана в Jira · процесс планирования CVM','calc']], sumok:1}
+];
+
+var rowsBox = document.getElementById('rows'), chat = document.getElementById('chat');
+var tzStatus = document.getElementById('tzStatus'), prog = document.getElementById('prog');
+var playBtn = document.getElementById('play');
+var sumBox = document.getElementById('sum');
+var rowMap = {};
+FIELDS.forEach(function(f){
+  var d = document.createElement('div');
+  d.className = 'row'; d.id = 'row-' + f.id;
+  d.innerHTML = '<div class="k">' + f.k + '</div><div class="v">—</div>';
+  rowsBox.appendChild(d);
+  rowMap[f.id] = d;
+});
+prog.textContent = '0 из ' + SCRIPT.length + ' реплик';
+
+var timers = [], playing = false, step = 0, SPD = 1;
+function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+function resetTalk(){
+  clearTimers(); playing = false; step = 0;
+  chat.innerHTML = '';
+  Object.keys(rowMap).forEach(function(k){
+    rowMap[k].classList.remove('filled');
+    rowMap[k].querySelector('.v').innerHTML = '—';
+  });
+  tzStatus.textContent = 'ожидание'; tzStatus.className = 'status';
+  sumBox.classList.remove('show', 'done');
+  prog.textContent = '0 из ' + SCRIPT.length + ' реплик';
+  playBtn.textContent = 'запустить разговор';
+}
+function fill(list){
+  list.forEach(function(x){
+    var row = rowMap[x[0]]; if(!row) return;
+    var tag = x[2] ? ' <span class="tag ' + x[2] + '">' +
+      (x[2] === 'calc' ? 'сделал сам' : x[2] === 'gap' ? 'нет данных' : 'допущение') + '</span>' : '';
+    row.classList.add('filled');
+    row.querySelector('.v').innerHTML = x[1] + tag;
+  });
+}
+function nearBottom(){
+  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < 140;
+}
+function bubble(item){
+  var stick = nearBottom();
+  var d = document.createElement('div');
+  d.className = 'msg ' + item.w;
+  d.innerHTML = '<span class="who">' + (item.w === 'a' ? 'агент' : 'заказчик') + '</span>' + item.t;
+  chat.appendChild(d);
+  if(stick) chat.scrollTop = chat.scrollHeight;
+}
+function typing(on){
+  var t = chat.querySelector('.typing');
+  if(on && !t){
+    var stick = nearBottom();
+    var d = document.createElement('div'); d.className = 'typing';
+    d.innerHTML = '<i></i><i></i><i></i>'; chat.appendChild(d);
+    if(stick) chat.scrollTop = chat.scrollHeight;
+  } else if(!on && t){ t.remove(); }
+}
+function next(){
+  if(step >= SCRIPT.length){
+    playing = false;
+    tzStatus.textContent = 'бриф подтверждён · отправка под условием';
+    tzStatus.className = 'status warn';
+    playBtn.textContent = 'проиграть снова';
+    return;
+  }
+  var item = SCRIPT[step];
+  var pause = reduce ? 60 : Math.min(1500, 380 + item.t.length * 11) / SPD;
+  typing(true);
+  timers.push(setTimeout(function(){
+    typing(false);
+    bubble(item);
+    if(item.f) fill(item.f);
+    if(item.sum) sumBox.classList.add('show');
+    if(item.sumok) sumBox.classList.add('done');
+    step++;
+    prog.textContent = step + ' из ' + SCRIPT.length + ' реплик';
+    if(step > 2 && tzStatus.className === 'status'){
+      tzStatus.textContent = 'заполняется'; tzStatus.className = 'status ok';
+    }
+    timers.push(setTimeout(next, reduce ? 40 : 620 / SPD));
+  }, pause));
+}
+function play(){
+  if(playing){ /* пауза */
+    clearTimers(); typing(false); playing = false;
+    playBtn.textContent = 'продолжить';
+    return;
+  }
+  if(step >= SCRIPT.length) resetTalk();
+  playing = true;
+  playBtn.textContent = 'пауза';
+  next();
+}
+playBtn.addEventListener('click', play);
+document.getElementById('reset').addEventListener('click', resetTalk);
+[].slice.call(document.querySelectorAll('#spdSeg button')).forEach(function(b){
+  b.addEventListener('click', function(){
+    [].slice.call(document.querySelectorAll('#spdSeg button')).forEach(function(x){ x.classList.remove('on'); });
+    b.classList.add('on'); SPD = +b.dataset.s;
+  });
+});
+
+
+/* ═══ орбита: 13 гипотез ═══ */
+var CATS = [
+  {n:'грани боли',       c:5, layer:2, size:1.00, a:.46},
+  {n:'задачи клиента',   c:3, layer:1, size:.92,  a:.70},
+  {n:'тело письма',      c:2, layer:3, size:.78,  a:.24},
+  {n:'альтернатива',     c:1, layer:2, size:.70,  a:.46},
+  {n:'контекст',         c:1, layer:2, size:.64,  a:.46},
+  {n:'момент понимания', c:1, layer:2, size:.58,  a:.46}
+];
+var orbit = document.getElementById('orbit');
+var core = document.createElement('div');
+core.className = 'bub core';
+core.style.cssText = 'width:26%;height:26%;left:37%;top:37%';
+core.innerHTML = '<b>4 версии</b><s>письма</s>';
+orbit.appendChild(core);
+var bubs = [];
+CATS.forEach(function(cat, i){
+  var ang = (-90 + i * 60) * Math.PI / 180;
+  var d = 32 * cat.size, R = 32;
+  var cx = 50 + Math.cos(ang) * R, cy = 50 + Math.sin(ang) * R;
+  var el = document.createElement('div');
+  el.className = 'bub';
+  el.style.cssText = 'width:' + d + '%;height:' + d + '%;left:' + (cx - d/2) + '%;top:' + (cy - d/2) +
+    '%;background:rgba(255,200,0,' + cat.a + ')';
+  el.innerHTML = '<b>' + cat.n + '</b><s>' + cat.c + '</s>';
+  orbit.appendChild(el);
+  bubs.push(el);
+});
+var picked = false;
+document.getElementById('pick').addEventListener('click', function(){
+  picked = !picked;
+  bubs.forEach(function(el, i){
+    el.classList.toggle('dim', picked && CATS[i].layer !== 1);
+    el.classList.toggle('pick', picked && CATS[i].layer === 1);
+  });
+  [].slice.call(document.querySelectorAll('#split .ver')).forEach(function(v){ v.classList.toggle('on', picked); });
+  this.textContent = picked ? 'вернуть весь банк' : 'показать отбор в первый тест';
+});
+
+/* ═══ расчёт выборки ═══ */
+var nRange = document.getElementById('nRange'), nOut = document.getElementById('nOut');
+var mdeOut = document.getElementById('mdeOut'), thrOut = document.getElementById('thrOut');
+var fmtOut = document.getElementById('fmtOut'), grpOut = document.getElementById('grpOut');
+var tgtOut = document.getElementById('tgtOut');
+var verdict = document.getElementById('verdict'), metricName = document.getElementById('metricName');
+var chart = document.getElementById('mdechart');
+var P = 9.4, M = 'OR';
+
+function fmtNum(n){ return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+function ru(x, d){ return x.toFixed(d === undefined ? 1 : d).replace('.', ','); }
+function nref(p){ return 406 * (1 - p / 100) / (p / 100); }
+function mdeOf(n, p){ return 50 * Math.sqrt(nref(p) / n); }
+function nFromSlider(v){
+  var raw = Math.pow(10, 3 + (v / 1000) * 2.3);
+  var stepv = raw >= 10000 ? 100 : raw >= 3000 ? 50 : 10;
+  return Math.round(raw / stepv) * stepv;
+}
+function drawChart(n, p){
+  var W = 640, H = 190, pad = 12, padB = 30, x0 = 1000, x1 = 200000;
+  function px(v){ return pad + (Math.log10(v) - Math.log10(x0)) / (Math.log10(x1) - Math.log10(x0)) * (W - pad * 2); }
+  function py(m){ return H - padB - Math.min(1, m / 80) * (H - pad - padB); }
+  var d = '';
+  for(var i = 0; i <= 120; i++){
+    var v = Math.pow(10, Math.log10(x0) + (i / 120) * (Math.log10(x1) - Math.log10(x0)));
+    d += (i ? ' L' : 'M') + px(v).toFixed(1) + ' ' + py(mdeOf(v, p)).toFixed(1);
+  }
+  var area = d + ' L' + (W - pad) + ' ' + (H - padB) + ' L' + pad + ' ' + (H - padB) + ' Z';
+  var cx = px(Math.min(x1, Math.max(x0, n))), cy = py(mdeOf(n, p));
+  var ticks = [1000, 10000, 100000].map(function(v){
+    var lab = v >= 1000 ? (v / 1000) + ' 000' : v;
+    if(v === 100000) lab = '100 000';
+    if(v === 10000) lab = '10 000';
+    if(v === 1000) lab = '1 000';
+    var anch = v === x0 ? 'start' : (v === 100000 ? 'end' : 'middle');
+    return '<text x="' + px(v).toFixed(1) + '" y="' + (H - 8) + '" font-size="12" fill="#A5A6A6" text-anchor="' + anch + '" font-family="Arial">' + lab + '</text>' +
+      '<line x1="' + px(v).toFixed(1) + '" y1="' + (H - padB) + '" x2="' + px(v).toFixed(1) + '" y2="' + (H - padB + 5) + '" stroke="#E6E6E6"/>';
+  }).join('');
+  chart.innerHTML =
+    '<defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#FFC800" stop-opacity=".22"/>' +
+      '<stop offset="1" stop-color="#FFC800" stop-opacity="0"/></linearGradient></defs>' +
+    '<path d="' + area + '" fill="url(#ag)"/>' +
+    '<line x1="' + pad + '" y1="' + py(20) + '" x2="' + (W - pad) + '" y2="' + py(20) +
+      '" stroke="#A5A6A6" stroke-dasharray="5 5" stroke-width="1"/>' +
+    '<text x="' + (W - pad) + '" y="' + (py(20) - 6) + '" font-size="12" fill="#A5A6A6" text-anchor="end" font-family="Arial">порог 20 %</text>' +
+    ticks +
+    '<path d="' + d + '" fill="none" stroke="#FFC800" stroke-width="3" stroke-linecap="round"/>' +
+    '<line x1="' + cx + '" y1="' + cy + '" x2="' + cx + '" y2="' + (H - padB) + '" stroke="#E6E6E6" stroke-width="1"/>' +
+    '<circle cx="' + cx + '" cy="' + cy + '" r="7" fill="#141414"/>';
+}
+function update(){
+  var n = nFromSlider(+nRange.value);
+  var mde = mdeOf(n, P);
+  var thr = Math.max(20, mde);
+  var minFour = M === 'CTOR' ? 10420 : 3912;
+  var four = n >= minFour;
+  nOut.textContent = fmtNum(n);
+  mdeOut.textContent = ru(mde) + ' %';
+  thrOut.textContent = '+' + ru(thr) + ' %';
+  fmtOut.textContent = four ? '4 версии' : '2 версии';
+  grpOut.textContent = four ? '4 × ' + fmtNum(n / 4) : '2 × ' + fmtNum(n / 2);
+  metricName.textContent = M;
+  tgtOut.textContent = ru(P * (1 + thr / 100), 1) + ' %';
+  var v;
+  if(!four) v = 'на такой базе четыре версии не разложить: нужно от ' + fmtNum(minFour) +
+    '. делаем две версии и складываем серию рассылок в общий вывод';
+  else if(mde >= 45) v = 'видна только разница в разы — тестируем разные подходы, не формулировки';
+  else if(mde >= 28) v = 'полный цикл доступен, но без запаса: различия подходов видны, формулировок — нет';
+  else if(mde > 20) v = 'запас есть, различия подходов видны уверенно';
+  else v = 'база большая: порог держат минимальные 20 %, можно тестировать формулировки';
+  verdict.textContent = v;
+  drawChart(n, P);
+}
+nRange.addEventListener('input', update);
+[].slice.call(document.querySelectorAll('#metricSeg button')).forEach(function(b){
+  b.addEventListener('click', function(){
+    [].slice.call(document.querySelectorAll('#metricSeg button')).forEach(function(x){ x.classList.remove('on'); });
+    b.classList.add('on'); P = +b.dataset.p; M = b.dataset.m; update();
+  });
+});
+update();
+
+/* ═══ слоты ═══ */
+var slotsBox = document.getElementById('slots');
+var planBox = document.getElementById('plan');
+var DAYS = ['пн','вт','ср','чт','пт','сб','вс'];
+DAYS.forEach(function(d){
+  var h = document.createElement('div'); h.className = 'slot head'; h.textContent = d;
+  slotsBox.appendChild(h);
+});
+// август 2026: 1 августа — суббота, первая строка начинается с пустых клеток
+var FREE = [26, 28, 31];
+var BUSY = [3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 24, 25, 27];
+for(var b = 0; b < 5; b++){
+  var e = document.createElement('div'); e.className = 'slot'; e.style.background = 'transparent';
+  slotsBox.appendChild(e);
+}
+for(var day = 1; day <= 31; day++){
+  var c = document.createElement('div');
+  c.className = 'slot';
+  c.textContent = day;
+  var col = (5 + day - 1) % 7;
+  if(FREE.indexOf(day) >= 0){ c.classList.add('free'); c.dataset.day = day; }
+  else if(BUSY.indexOf(day) >= 0){ c.classList.add('busy'); }
+  else if(col >= 5){ c.classList.add('wk'); }
+  slotsBox.appendChild(c);
+}
+function fmtDay(d){ return d <= 31 ? d + ' августа' : (d - 31) + ' сентября'; }
+function renderPlan(d){
+  planBox.innerHTML =
+    '<div class="plan-row hot"><span>отправка</span><b>' + fmtDay(d) + '</b></div>' +
+    '<div class="plan-row"><span>снятие результата · +7 дней</span><b>' + fmtDay(d + 7) + '</b></div>' +
+    '<div class="plan-row"><span>разбор и решение · +10 дней</span><b>' + fmtDay(d + 10) + '</b></div>' +
+    '<div class="plan-row"><span>следующая отправка на сегмент · +14 дней</span><b>' + fmtDay(d + 14) + '</b></div>';
+}
+function pickSlot(el){
+  [].slice.call(slotsBox.querySelectorAll('.pickd')).forEach(function(x){
+    x.classList.remove('pickd'); x.classList.add('free');
+  });
+  el.classList.remove('free'); el.classList.add('pickd');
+  renderPlan(+el.dataset.day);
+}
+slotsBox.addEventListener('click', function(ev){
+  var t = ev.target;
+  if(!t.classList.contains('free')) return;
+  pickSlot(t);
+});
+pickSlot(slotsBox.querySelector('[data-day="26"]'));
+
+/* jira появляется построчно через общий observer .rise → .in */
+
+/* финал: карточка задачи собирается по полям и уходит в работу */
+var finRows = document.getElementById('finRows');
+var finStatus = document.getElementById('finStatus');
+var FIN = [
+  ['заказчик', 'менеджер продукта'],
+  ['тип', 'промо + ABCD-тест'],
+  ['сегмент', 'СМБ · розница, склады'],
+  ['база', '12 000 · 4 × 3 000'],
+  ['метрика', 'OR · порог +28,6 %'],
+  ['дата', '26 августа']
+];
+function finRow(item){
+  var d = document.createElement('div');
+  d.className = 'fin-row';
+  d.innerHTML = '<span>' + item[0] + '</span><div>' + item[1] + '</div>';
+  finRows.appendChild(d);
+}
+var finStep = 0;
+function finNext(){
+  if(finStep >= FIN.length){
+    finStatus.textContent = 'задача в Jira · ушла в работу ✓';
+    finStatus.classList.add('ok');
+    setTimeout(function(){
+      finRows.innerHTML = '';
+      finStatus.textContent = 'агент собирает задачу…';
+      finStatus.classList.remove('ok');
+      finStep = 0;
+      setTimeout(finNext, 700);
+    }, 2600);
+    return;
+  }
+  finRow(FIN[finStep]);
+  finStep++;
+  setTimeout(finNext, 620);
+}
+if(reduce){
+  FIN.forEach(finRow);
+  finStatus.textContent = 'задача в Jira · ушла в работу ✓';
+  finStatus.classList.add('ok');
+}
+var finStarted = reduce;
+/* ═══ появление блоков: обычный скролл, без IntersectionObserver ═══ */
+var revealEls = [].slice.call(document.querySelectorAll('.rise'));
+var stepsEl = document.getElementById('steps');
+function inView(el, k){
+  if(!el) return false;
+  var r = el.getBoundingClientRect();
+  return r.top < window.innerHeight * (k || 0.94) && r.bottom > -40;
+}
+function revealCheck(){
+  for(var i = revealEls.length - 1; i >= 0; i--){
+    if(inView(revealEls[i])){ revealEls[i].classList.add('in'); revealEls.splice(i, 1); }
+  }
+  if(cnt && !cntDone && inView(cnt, .85)){ cntDone = true; runCounter(); }
+  if(!mcStarted && inView(mcBody, .85)){ mcStarted = true; mcNext(); }
+  if(!finStarted && inView(finRows, .85)){ finStarted = true; finNext(); }
+  if(!playing && step === 0 && inView(chat, .8)) play();
+  if(!pipeSeqDone && stepsEl && pipe.offsetHeight - window.innerHeight <= 0 && inView(stepsEl, .8)) pipeSequence();
+}
+var rTick = false;
+function rSchedule(){
+  if(rTick) return;
+  rTick = true;
+  requestAnimationFrame(function(){ revealCheck(); rTick = false; });
+}
+addEventListener('scroll', rSchedule, {passive:true});
+addEventListener('resize', rSchedule);
+addEventListener('orientationchange', rSchedule);
+addEventListener('load', rSchedule);
+addEventListener('touchmove', rSchedule, {passive:true});
+var rN = 0, rIv = setInterval(function(){ revealCheck(); if(++rN > 24) clearInterval(rIv); }, 250);
+revealCheck();
+})();
+
+/* страховка: если через 5 секунд что-то так и не проявилось — показать принудительно */
+setTimeout(function(){
+  var hidden = 0, els = document.querySelectorAll('.rise');
+  for(var i = 0; i < els.length; i++){
+    if(!els[i].classList.contains('in')){
+      var r = els[i].getBoundingClientRect();
+      if(r.top < innerHeight * 1.5) hidden++;
+    }
+  }
+  if(hidden) revealAll();
+}, 5000);
+</script>
+</body>
+</html>
